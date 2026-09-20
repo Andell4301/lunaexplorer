@@ -1,0 +1,116 @@
+name: Release APK
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@0f481fcb613427c0f801b606911222b5b6f3083a # v5.5.0
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: gradle
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+        with:
+          packages: 'platforms;android-37.0 build-tools;36.0.0 platform-tools'
+      - name: Test and lint
+        run: ./gradlew --no-daemon --max-workers=1 :check
+      - name: Build and verify signed APK
+        env:
+          LUNA_KEYSTORE_BASE64: ${{ secrets.LUNA_KEYSTORE_BASE64 }}
+          LUNA_KEYSTORE_FILE: ${{ runner.temp }}/luna-release.jks
+          LUNA_KEYSTORE_PASSWORD: ${{ secrets.LUNA_KEYSTORE_PASSWORD }}
+          LUNA_KEY_ALIAS: ${{ secrets.LUNA_KEY_ALIAS }}
+          LUNA_KEY_PASSWORD: ${{ secrets.LUNA_KEY_PASSWORD }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${LUNA_KEYSTORE_BASE64:?Set the LUNA_KEYSTORE_BASE64 repository secret}"
+          : "${LUNA_KEYSTORE_PASSWORD:?Set the LUNA_KEYSTORE_PASSWORD repository secret}"
+          : "${LUNA_KEY_ALIAS:?Set the LUNA_KEY_ALIAS repository secret}"
+          : "${LUNA_KEY_PASSWORD:?Set the LUNA_KEY_PASSWORD repository secret}"
+          umask 077
+          trap 'rm -f "$LUNA_KEYSTORE_FILE"' EXIT
+          printf '%s' "$LUNA_KEYSTORE_BASE64" | base64 --decode > "$LUNA_KEYSTORE_FILE"
+          ./gradlew --no-daemon --max-workers=1 :app:assembleRelease
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --verbose --print-certs \
+            app/build/outputs/apk/release/app-release.apk > "$RUNNER_TEMP/signing-certificate.txt"
+          certificate_sha256="$(keytool -exportcert -keystore "$LUNA_KEYSTORE_FILE" \
+            -storepass:env LUNA_KEYSTORE_PASSWORD -alias "$LUNA_KEY_ALIAS" | sha256sum | cut -d ' ' -f 1)"
+          grep -Fx "Signer #1 certificate SHA-256 digest: $certificate_sha256" "$RUNNER_TEMP/signing-certificate.txt"
+      - name: Prepare release assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          metadata=app/build/outputs/apk/release/output-metadata.json
+          if ! version="$(jq -er --arg tag "$GITHUB_REF_NAME" '
+            select(.applicationId == "com.lunaexplorer.app" and .variantName == "release"
+              and .artifactType.type == "APK" and (.elements | length) == 1)
+            | .elements[0]
+            | select(.type == "SINGLE" and .filters == [] and .outputFile == "app-release.apk"
+              and .versionCode > 0 and ("v" + .versionName) == $tag)
+            | .versionName
+            | select(test("^[0-9]+\\.[0-9]+\\.[0-9]+([-+][0-9A-Za-z.+-]+)?$"))
+          ' "$metadata")"; then
+            echo 'Release requires one signed APK and a tag matching v<versionName>.' >&2
+            exit 1
+          fi
+          name="LunaExplorer-$version"
+          mkdir -p dist
+          cp app/build/outputs/apk/release/app-release.apk "dist/$name.apk"
+          cp app/build/outputs/mapping/release/mapping.txt "dist/$name-mapping.txt"
+          cp "$RUNNER_TEMP/signing-certificate.txt" "dist/$name-signing-certificate.txt"
+          (cd dist && sha256sum "$name.apk" > "$name.apk.sha256")
+      - name: Upload release assets
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed-release-${{ github.ref_name }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          prerelease=()
+          if [[ "${GITHUB_REF_NAME%%+*}" == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --draft \
+            --title "Luna Explorer ${GITHUB_REF_NAME#v}" --generate-notes "${prerelease[@]}"
+      - name: Remove signing key
+        if: always()
+        shell: bash
+        run: rm -f "$RUNNER_TEMP/luna-release.jks"
+      - name: Upload reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-verification-reports
+          path: |
+            core/build/reports/
+            app/build/reports/
+            core/build/test-results/
+            app/build/test-results/
+          if-no-files-found: ignore
+          retention-days: 14

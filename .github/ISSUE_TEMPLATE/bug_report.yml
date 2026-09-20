@@ -1,0 +1,27 @@
+name: Bug report
+description: Report a reproducible problem in Luna Explorer.
+body:
+  - type: input
+    id: environment
+    attributes:
+      label: App and device
+      description: Luna version, Android version, and device model.
+    validations:
+      required: true
+  - type: input
+    id: storage
+    attributes:
+      label: Storage type
+      description: If relevant, specify local storage, SD/USB, an Android document provider, SMB, or Backblaze B2. For SMB, include the server software if known.
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the expected result and what happened instead.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or screenshots
+      description: Optional. Remove personal paths, file names and server details before sharing logs.

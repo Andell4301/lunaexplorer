@@ -1,0 +1,25 @@
+.gradle/
+.kotlin/
+**/build/
+**/bin/
+local.properties
+.idea/
+*.iml
+captures/
+*.jks
+*.keystore
+
+# Local tools, credentials and publication output.
+.agents/
+.codex/
+.vscode/*
+.env
+.env.*
+*.p12
+/keystore.properties
+/signing.properties
+/dist/
+
+# Personal reference material; excluded from the public repository.
+/personal-notes/
+.DS_Store

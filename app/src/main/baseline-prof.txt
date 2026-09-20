@@ -1,0 +1,9 @@
+# Hand-written rules, not a macrobenchmark-generated profile: the packages on the startup and
+# folder-scrolling hot paths, compiled ahead of time on install.
+HSPLcom/lunaexplorer/app/ui/**->**(**)**
+HSPLcom/lunaexplorer/core/**->**(**)**
+HSPLcom/lunaexplorer/app/storage/**->**(**)**
+HSPLandroidx/compose/runtime/**->**(**)**
+HSPLandroidx/compose/ui/**->**(**)**
+HSPLandroidx/compose/foundation/**->**(**)**
+HSPLandroidx/compose/material3/**->**(**)**

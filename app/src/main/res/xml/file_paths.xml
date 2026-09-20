@@ -1,0 +1,5 @@
+<paths>
+    <!-- The root mapping supports shared file URIs; callers grant access to individual URIs. -->
+    <root-path name="device" path="/" />
+    <cache-path name="operation_reports" path="reports/" />
+</paths>

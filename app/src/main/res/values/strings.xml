@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">Luna Explorer</string>
+    <string name="open_with_images">Luna image viewer</string>
+    <string name="open_with_media">Luna player</string>
+    <string name="open_with_text">Luna text editor</string>
+    <string name="open_with_documents">Luna document viewer</string>
+    <string name="open_with_archives">Luna archive browser</string>
+    <string name="open_with_databases">Luna database viewer</string>
+    <string name="playback_channel">Playback</string>
+</resources>

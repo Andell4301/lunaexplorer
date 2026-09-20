@@ -1,0 +1,171 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <!-- Keeps a network read alive while the screen is off during background play. -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Lists Luna on the usage-access settings screen; the user still has to grant it there. -->
+    <uses-permission android:name="android.permission.PACKAGE_USAGE_STATS"
+        tools:ignore="ProtectedPermissions" />
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <!-- All-files access, plus the storage permissions older Android versions use instead. -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="29" />
+
+    <!-- MediaStore access on API 33+ without all-files access. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+
+    <!-- The Applications screen lists installed packages, which API 30+ filters without this. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- Without this the package installer silently ignores uninstall requests (target API 28+). -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="vnd.android.document/directory" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.OPEN_DOCUMENT_TREE" />
+        </intent>
+    </queries>
+
+    <application android:name=".LunaApplication" android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/Theme.LunaExplorer" android:supportsRtl="true"
+        android:requestLegacyExternalStorage="true"
+        android:allowBackup="false" android:fullBackupContent="false" android:dataExtractionRules="@xml/data_extraction_rules">
+        <!-- singleTask prevents competing session writers; configChanges keeps playback alive on rotation. -->
+        <activity android:name=".MainActivity" android:exported="true" android:launchMode="singleTask"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+            android:supportsPictureInPicture="true"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="com.lunaexplorer.app.OPEN_FOLDER" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="luna" />
+            </intent-filter>
+        </activity>
+        <!-- "Open with Luna": one alias per file kind, each disabled until its setting enables it. -->
+        <activity-alias android:name=".open.ImagesAlias" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:label="@string/open_with_images">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="image/*" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".open.MediaAlias" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:label="@string/open_with_media">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="audio/*" />
+                <data android:mimeType="video/*" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".open.TextAlias" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:label="@string/open_with_text">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="text/*" />
+                <data android:mimeType="application/json" />
+                <data android:mimeType="application/xml" />
+                <data android:mimeType="application/javascript" />
+                <data android:mimeType="application/x-sh" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".open.DocumentsAlias" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:label="@string/open_with_documents">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/pdf" />
+                <data android:mimeType="application/epub+zip" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <data android:mimeType="application/vnd.openxmlformats-officedocument.presentationml.presentation" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".open.ArchivesAlias" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:label="@string/open_with_archives">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/zip" />
+                <data android:mimeType="application/java-archive" />
+                <data android:mimeType="application/x-tar" />
+                <!-- No bare gzip, xz or bzip2: a single compressed file cannot be browsed. -->
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/vnd.rar" />
+                <data android:mimeType="application/vnd.android.package-archive" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias android:name=".open.DatabasesAlias" android:targetActivity=".MainActivity"
+            android:enabled="false" android:exported="true" android:label="@string/open_with_databases">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="content" />
+                <data android:scheme="file" />
+                <data android:mimeType="application/vnd.sqlite3" />
+                <data android:mimeType="application/x-sqlite3" />
+            </intent-filter>
+        </activity-alias>
+        <provider android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files" android:exported="false" android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
+        <!-- Only shell and system callers hold INTERACT_ACROSS_USERS_FULL. -->
+        <provider android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku" android:exported="true" android:enabled="true"
+            android:multiprocess="false" android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <provider android:name=".storage.StreamProvider"
+            android:authorities="${applicationId}.stream" android:exported="false" android:grantUriPermissions="true" />
+        <!-- MANAGE_DOCUMENTS restricts direct access to the system; other apps need document grants. -->
+        <provider android:name=".storage.LunaDocumentsProvider"
+            android:authorities="${applicationId}.documents" android:exported="true"
+            android:grantUriPermissions="true" android:permission="android.permission.MANAGE_DOCUMENTS"
+            android:enabled="false">
+            <intent-filter>
+                <action android:name="android.content.action.DOCUMENTS_PROVIDER" />
+            </intent-filter>
+        </provider>
+        <service android:name=".storage.ExternalStreamService" android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <!-- No external session connections; Media3 registers media buttons at runtime. -->
+        <service android:name=".playback.PlaybackService" android:exported="false"
+            android:foregroundServiceType="mediaPlayback" />
+        <service android:name=".storage.ExternalTransferService" android:exported="false"
+            android:foregroundServiceType="dataSync" />
+        <service android:name="androidx.work.impl.foreground.SystemForegroundService"
+            android:foregroundServiceType="dataSync" tools:node="merge" />
+    </application>
+</manifest>
