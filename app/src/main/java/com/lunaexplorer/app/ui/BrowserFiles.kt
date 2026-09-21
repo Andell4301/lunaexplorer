@@ -10,6 +10,9 @@ import com.lunaexplorer.app.AppGraph
 import com.lunaexplorer.app.model.BrowserState
 import com.lunaexplorer.app.storage.ContentAddressable
 import com.lunaexplorer.app.storage.FileFacts
+import com.lunaexplorer.app.storage.SqlInput
+import com.lunaexplorer.app.storage.SqlPage
+import com.lunaexplorer.app.storage.SqliteBrowser
 import com.lunaexplorer.app.storage.ViewerFiles
 import com.lunaexplorer.app.playback.PlaybackSource
 import com.lunaexplorer.core.*
@@ -227,6 +230,60 @@ class BrowserFiles internal constructor(
     }
 
     fun absolutePathOf(entry: Entry): String? = resolver.pathOf(entry.ref)
+
+    suspend fun openSqliteForEditing(browser: SqliteBrowser, path: String): SqliteBrowser.Handle {
+        var opened: SqliteBrowser.Handle? = null
+        try {
+            return sqliteMutation(mayWrite = true) {
+                browser.open(path, forWriting = true).also { opened = it }
+            }
+        } catch (error: Throwable) {
+            withContext(NonCancellable + Dispatchers.IO) { opened?.close() }
+            throw error
+        }
+    }
+
+    suspend fun updateSqliteCell(
+        browser: SqliteBrowser,
+        handle: SqliteBrowser.Handle,
+        table: String,
+        column: String,
+        identity: String,
+        value: String?,
+        type: Int,
+    ): Result<Unit> = sqliteMutation(handle.writable) {
+        browser.updateCell(handle, table, column, identity, value, type)
+    }
+
+    suspend fun insertSqliteRow(
+        browser: SqliteBrowser,
+        handle: SqliteBrowser.Handle,
+        table: String,
+        values: Map<String, SqlInput>,
+    ): Result<Unit> = sqliteMutation(handle.writable) {
+        browser.insertRow(handle, table, values)
+    }
+
+    suspend fun deleteSqliteRow(
+        browser: SqliteBrowser,
+        handle: SqliteBrowser.Handle,
+        table: String,
+        identity: String,
+    ): Result<Unit> = sqliteMutation(handle.writable) {
+        browser.deleteRow(handle, table, identity)
+    }
+
+    suspend fun executeSqlite(browser: SqliteBrowser, handle: SqliteBrowser.Handle, sql: String): Result<SqlPage> =
+        sqliteMutation(handle.writable) { browser.execute(handle, sql) }
+
+    private suspend fun <T> sqliteMutation(mayWrite: Boolean, block: suspend () -> T): T {
+        try {
+            return block()
+        } finally {
+            // SQLite may commit changes before an error or cancellation reaches the caller.
+            if (mayWrite) withContext(NonCancellable + Dispatchers.Main.immediate) { onChanged(true) }
+        }
+    }
 
     fun canEditTags(entry: Entry) = graph.inspector.canEditTags(entry)
     suspend fun readTags(entry: Entry): List<EditableTag> = graph.inspector.readTags(entry)
