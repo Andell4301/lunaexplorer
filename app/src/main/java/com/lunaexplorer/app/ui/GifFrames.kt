@@ -56,8 +56,11 @@ import com.lunaexplorer.core.Gif
 import com.lunaexplorer.core.GifFrame
 import com.lunaexplorer.core.GifReader
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -65,7 +68,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 import kotlin.math.sqrt
 
-private class FrameThumbnail(val index: Int, val delayMillis: Int, val image: ImageBitmap)
+internal class FrameThumbnail(val index: Int, val delayMillis: Int, val image: ImageBitmap)
 
 /** Every thumbnail is held at once, so their size shrinks as the frame count grows. */
 private const val THUMBNAIL_BUDGET = 48L * 1024 * 1024
@@ -86,7 +89,12 @@ private fun bitmapOf(frame: GifFrame, maxSide: Int? = null): Bitmap {
 }
 
 @Composable
-internal fun GifFrames(name: String, bytes: ByteArray, onBack: () -> Unit) {
+internal fun GifFrames(
+    name: String,
+    bytes: ByteArray,
+    onBack: () -> Unit,
+    decode: (ByteArray, Int) -> Flow<FrameThumbnail> = ::gifThumbnails,
+) {
     var count by remember(bytes) { mutableStateOf<Int?>(null) }
     var failure by remember(bytes) { mutableStateOf<String?>(null) }
     val thumbnails = remember(bytes) { mutableStateListOf<FrameThumbnail>() }
@@ -94,30 +102,27 @@ internal fun GifFrames(name: String, bytes: ByteArray, onBack: () -> Unit) {
     val grid = rememberLazyGridState()
 
     LaunchedEffect(bytes) {
-        withContext(Dispatchers.Default) {
-            try {
-                val total = Gif.frameCount(bytes)
-                count = total
-                val side = sqrt(THUMBNAIL_BUDGET / (4.0 * total.coerceAtLeast(1))).toInt()
-                    .coerceIn(THUMBNAIL_SIDE.first, THUMBNAIL_SIDE.last)
-                Gif.frames(bytes) { frame ->
-                    thumbnails += FrameThumbnail(frame.index, frame.delayMillis, bitmapOf(frame, side).asImageBitmap())
-                    isActive
-                }
-                if (isActive) count = thumbnails.size
-            } catch (error: IOException) {
-                failure = error.message ?: "This image could not be read"
-            } catch (_: OutOfMemoryError) {
-                if (thumbnails.isEmpty()) failure = TOO_LARGE
-            }
+        try {
+            val total = withContext(Dispatchers.Default) { Gif.frameCount(bytes) }
+            count = total
+            val side = sqrt(THUMBNAIL_BUDGET / (4.0 * total.coerceAtLeast(1))).toInt()
+                .coerceIn(THUMBNAIL_SIDE.first, THUMBNAIL_SIDE.last)
+            decode(bytes, side).collect { thumbnails += it }
+            count = thumbnails.size
+        } catch (error: IOException) {
+            ensureActive()
+            failure = error.message ?: "This image could not be read"
+        } catch (_: OutOfMemoryError) {
+            if (thumbnails.isEmpty()) failure = TOO_LARGE
         }
     }
+    val shownFrames = thumbnails.toList()
 
     BackHandler { if (opened != null) opened = null else onBack() }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         val first = opened
         if (first != null) {
-            FramePager(bytes, thumbnails, total = maxOf(count ?: 0, thumbnails.size), first, onBack = { opened = null })
+            FramePager(bytes, shownFrames, total = maxOf(count ?: 0, shownFrames.size), first, onBack = { opened = null })
             return@Surface
         }
         Column(Modifier.fillMaxSize().windowInsetsPadding(BELOW_THE_BAR)) {
@@ -126,13 +131,13 @@ internal fun GifFrames(name: String, bytes: ByteArray, onBack: () -> Unit) {
                 failure != null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     Text(failure!!, Modifier.padding(24.dp))
                 }
-                thumbnails.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+                shownFrames.isEmpty() -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 else -> FastLazyVerticalGrid(GridCells.Adaptive(104.dp), Modifier.fillMaxSize().testTag("gifFrames"), grid,
                     contentPadding = PaddingValues(8.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(thumbnails.size, key = { thumbnails[it].index }) { position ->
-                        val frame = thumbnails[position]
+                    items(shownFrames.size, key = { shownFrames[it].index }) { position ->
+                        val frame = shownFrames[position]
                         Column(Modifier.clip(RoundedCornerShape(8.dp))
                             .clickable(role = Role.Button, onClickLabel = "Frame ${frame.index + 1}") { opened = frame.index }) {
                             Image(frame.image, null, Modifier.fillMaxWidth().aspectRatio(1f)
@@ -146,6 +151,15 @@ internal fun GifFrames(name: String, bytes: ByteArray, onBack: () -> Unit) {
         }
     }
 }
+
+internal fun gifThumbnails(bytes: ByteArray, side: Int): Flow<FrameThumbnail> = flow {
+    val reader = GifReader(bytes)
+    while (true) {
+        currentCoroutineContext().ensureActive()
+        val frame = reader.next() ?: break
+        emit(FrameThumbnail(frame.index, frame.delayMillis, bitmapOf(frame, side).asImageBitmap()))
+    }
+}.flowOn(Dispatchers.Default)
 
 /**
  * Full-size frames. A frame is drawn over the ones before it, so the step forward decodes one more

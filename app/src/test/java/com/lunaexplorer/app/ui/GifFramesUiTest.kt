@@ -7,6 +7,8 @@ import androidx.lifecycle.ViewModelProvider
 import com.lunaexplorer.app.LunaApplication
 import com.lunaexplorer.app.model.Overlay
 import com.lunaexplorer.app.model.ViewerKind
+import com.lunaexplorer.app.ui.GifFramesFixture.frames
+import com.lunaexplorer.app.ui.GifFramesFixture.twoFrames
 import org.junit.Assert.assertNotNull
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -20,14 +22,6 @@ import java.io.File
 @Config(sdk = [35], application = LunaApplication::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class GifFramesUiTest : RobolectricBrowserUiTest() {
-    /** Two frames, red then blue, half a second each. */
-    private val twoFrames = byteArrayOf(
-        71, 73, 70, 56, 57, 97, 2, 0, 2, 0, -16, 0, 0, -1, 0, 0, 0, 0, -1, 33, -1, 11, 78, 69, 84,
-        83, 67, 65, 80, 69, 50, 46, 48, 3, 1, 0, 0, 0, 33, -7, 4, 0, 50, 0, 0, 0, 44, 0, 0, 0, 0, 2,
-        0, 2, 0, 0, 2, 3, 4, -128, 2, 0, 33, -7, 4, 0, 50, 0, 0, 0, 44, 0, 0, 0, 0, 2, 0, 2, 0, 0,
-        2, 3, 76, -110, 2, 0, 59,
-    )
-
     private val viewModel get() = compose.runOnUiThread {
         ViewModelProvider(compose.activity)[BrowserViewModel::class.java]
     }
@@ -67,13 +61,6 @@ class GifFramesUiTest : RobolectricBrowserUiTest() {
         compose.runOnUiThread { viewer.onBackPressedDispatcher.onBackPressed() }
         awaitNode("Back to the picture", hasContentDescription("Frames"))
         assertNotNull("Back from the frames must not close the viewer", viewModel.state.value.overlay)
-    }
-
-    /** The header and loop block, then the first frame [count] times over. */
-    private fun frames(count: Int): ByteArray {
-        val head = twoFrames.copyOfRange(0, 38)
-        val frame = twoFrames.copyOfRange(38, 62)
-        return (0 until count).fold(head) { bytes, _ -> bytes + frame } + byteArrayOf(59)
     }
 
     @Test fun closingAFrameLeavesTheGridWhereItWas() {
