@@ -4,6 +4,7 @@ import com.lunaexplorer.app.AppGraph
 import com.lunaexplorer.app.model.BrowserState
 import com.lunaexplorer.app.model.Clipboard
 import com.lunaexplorer.app.model.ExtractPlan
+import com.lunaexplorer.app.model.Overlay
 import com.lunaexplorer.app.model.Screen
 import com.lunaexplorer.app.model.VersionedDelete
 import com.lunaexplorer.core.*
@@ -249,8 +250,29 @@ class BrowserOperations internal constructor(
     fun cancelOperation(id: String) { scope.launch { graph.queue.cancel(id) } }
 
     fun resolveConflict(id: String, policy: ConflictPolicy, name: String? = null) {
+        resolveConflict(id, policy, name, confirmed = false)
+    }
+
+    fun confirmOverwrite(confirmation: Overlay.Overwrite) {
+        if (_state.value.overlay != confirmation) return
+        _state.update { it.copy(overlay = Overlay.Queue) }
+        resolveConflict(confirmation.operationId, confirmation.policy, null, confirmed = true)
+    }
+
+    private fun resolveConflict(id: String, policy: ConflictPolicy, name: String?, confirmed: Boolean) {
+        val overlay = _state.value.overlay
         scope.launch {
             try {
+                if (!confirmed && name == null && (policy == ConflictPolicy.REPLACE || policy == ConflictPolicy.MERGE)) {
+                    val request = graph.database.request(id) ?: return@launch
+                    val destinations = request.destination?.let(::listOf) ?: request.sources
+                    if (destinations.any { Feature.UNGUARDED_REPLACE in graph.providers.provider(it).features }) {
+                        _state.update {
+                            if (it.overlay == overlay) it.copy(overlay = Overlay.Overwrite(id, policy)) else it
+                        }
+                        return@launch
+                    }
+                }
                 if (graph.database.resolveConflict(id, policy, name)) graph.queue.schedule()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { ensureActive(); showMessage("Could not resolve conflict: ${error.message}") }

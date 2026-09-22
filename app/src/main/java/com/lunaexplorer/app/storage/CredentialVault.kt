@@ -9,6 +9,7 @@ import android.security.keystore.KeyProperties
 import android.security.keystore.UserNotAuthenticatedException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import com.lunaexplorer.app.storage.transfer.TransferCredentials
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -22,6 +23,7 @@ import javax.crypto.spec.GCMParameterSpec
 data class Secrets(
     val smbPasswords: Map<String, String> = emptyMap(),
     val b2Keys: Map<String, String> = emptyMap(),
+    val transferCredentials: Map<String, TransferCredentials> = emptyMap(),
 )
 
 class VaultLocked : Exception("The credential vault is locked")

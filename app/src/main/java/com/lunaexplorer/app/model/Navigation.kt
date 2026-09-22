@@ -52,6 +52,7 @@ sealed interface View {
         val folderKey: String? = null,
         /** The folder the visible rows belong to; lags [ref] during a load. */
         val listingRef: NodeRef? = null,
+        val listingLocation: Location? = null,
         /** Android closes this folder to file managers, so an empty listing may not mean an empty folder. */
         val closedToApps: Boolean = false,
     ) : View

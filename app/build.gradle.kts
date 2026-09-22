@@ -26,8 +26,8 @@ android {
         applicationId = "com.lunaexplorer.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "1.1.1"
+        versionCode = 4
+        versionName = "1.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; aidl = true }
@@ -86,6 +86,10 @@ dependencies {
     implementation("androidx.work:work-runtime-ktx:2.10.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2")
     implementation("com.hierynomus:smbj:0.14.0")
+    implementation("commons-net:commons-net:3.13.0")
+    implementation("com.hierynomus:sshj:0.40.0")
+    implementation("org.bouncycastle:bcprov-jdk18on:1.80.2")
+    implementation("org.bouncycastle:bcpkix-jdk18on:1.80")
     // smbj logs through SLF4J; LunaSlf4jProvider routes it to the debug log.
     implementation("org.slf4j:slf4j-api:2.0.9")
     // SMB share enumeration (srvsvc over DCE/RPC).
@@ -157,6 +161,15 @@ val checkReleaseReflection = tasks.register("checkReleaseReflection") {
             "Lcom/lunaexplorer/app/storage/shizuku/FileHelperService;" to "()V",
             "Lcom/lunaexplorer/app/storage/shizuku/FileHelperService;" to "(Landroid/content/Context;)V",
             "Lrikka/shizuku/ShizukuProvider;" to "()V",
+            // Bouncy Castle builds algorithm mappings and implementations by registered class name.
+            "Lorg/bouncycastle/jce/provider/BouncyCastleProvider;" to "()V",
+            "Lorg/bouncycastle/jcajce/provider/asymmetric/EdEC\$Mappings;" to "()V",
+            "Lorg/bouncycastle/jcajce/provider/asymmetric/RSA\$Mappings;" to "()V",
+            "Lorg/bouncycastle/jcajce/provider/asymmetric/DH\$Mappings;" to "()V",
+            "Lorg/bouncycastle/jcajce/provider/asymmetric/edec/KeyFactorySpi\$Ed25519;" to "()V",
+            "Lorg/bouncycastle/jcajce/provider/asymmetric/edec/KeyPairGeneratorSpi\$X25519;" to "()V",
+            "Lorg/bouncycastle/jcajce/provider/asymmetric/edec/SignatureSpi\$Ed25519;" to "()V",
+            "Lorg/bouncycastle/jcajce/provider/asymmetric/edec/KeyAgreementSpi\$X25519;" to "()V",
         )
         val dexes = dexDir.get().asFile.listFiles { f -> f.extension == "dex" }.orEmpty()
         require(dexes.isNotEmpty()) { "No DEX files under $dexDir" }
@@ -223,14 +236,19 @@ val checkReleaseReflection = tasks.register("checkReleaseReflection") {
         require(Regex("""Ldalvik/annotation/MethodParameters;.*"bucketName".*"fileLockConfiguration"""").containsMatchIn(annotations)) {
             "Release DEX has no parameter names for B2 SDK constructors; listing buckets and starting large uploads would fail"
         }
-        // Class names that show up in SMB log lines.
+        // Library names used for readable SMB logs and SSHJ log suppression.
         val named = listOf(
             "Lcom/hierynomus/protocol/commons/concurrent/Promise;",
             "Lcom/hierynomus/smbj/transport/tcp/direct/DirectTcpTransport;",
+            "Lnet/schmizz/sshj/transport/Decoder;",
+            "Lcom/hierynomus/sshj/userauth/keyprovider/OpenSSHKeyV1KeyFile;",
         )
         val renamed = named.filterNot { text.contains("Class descriptor  : '$it'") }
         require(renamed.isEmpty()) {
-            "Release DEX has renamed SMB library classes $renamed; SMB log lines would be unreadable"
+            "Release DEX has renamed library classes $renamed; log names and suppression would fail"
+        }
+        require(classBody("Lorg/bouncycastle/openssl/PEMDecryptor;").isNotEmpty()) {
+            "Release DEX is missing SSHJ's encrypted PEM availability check"
         }
         println("Release reflection check: ${required.size} constructors, ${handlers.size} event handlers, ${fields.size} fields and ${named.size} library class names present")
     }

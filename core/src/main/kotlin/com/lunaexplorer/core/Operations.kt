@@ -189,7 +189,7 @@ class OperationEngine(
         private var lastProgressAt = 0L
         private val manifest = mutableListOf<Snapshot>()
         private val visited = mutableSetOf<NodeRef>()
-        private val retainedByCommit = mutableListOf<NodeRef>()
+        private val retainedByCommit = linkedSetOf<NodeRef>()
         private val nestedArtifacts = mutableListOf<NodeRef>()
 
         private suspend fun journal(phase: JournalPhase, artifact: NodeRef? = staged, message: String = "") {
@@ -233,8 +233,8 @@ class OperationEngine(
                 val relocated = try {
                     removing { origin.relocate(ref, parent, finalName) }
                 } catch (failed: StorageException) {
-                    // Where a relocation is many copies it may be half done; copying again by another route would hide that.
-                    if (failed.reason == StorageError.CONFLICT || Feature.PREFIX_FOLDERS in origin.features) throw failed else null
+                    // Only an unsupported operation establishes that no mutation took place.
+                    if (failed.reason != StorageError.UNSUPPORTED || Feature.PREFIX_FOLDERS in origin.features) throw failed else null
                 }
                 if (relocated != null) {
                     published = relocated.ref
@@ -559,7 +559,12 @@ class OperationEngine(
                         removeAfterFlush = removeAfterFlush)
                         .let { replacement ->
                             try { replacement.transfer(ref).copy(message = "Renamed ${item.name} to $name") }
-                            finally { staged = replacement.staged; published = replacement.published }
+                            finally {
+                                staged = replacement.staged
+                                published = replacement.published
+                                retainedByCommit += replacement.retainedByCommit
+                                nestedArtifacts += replacement.nestedArtifacts
+                            }
                         }
                 }
                 journal(JournalPhase.COMMITTING, ref, "Renaming ${item.name} to $resolved")
@@ -670,19 +675,20 @@ class OperationEngine(
             val leftover = archiveStaging?.takeIf { ref ->
                 runCatching { registry.provider(ref).stat(ref) }.isSuccess
             }
-            val artifact = staged ?: return nestedArtifacts + listOfNotNull(leftover)
+            val retained = nestedArtifacts + retainedByCommit + listOfNotNull(leftover)
+            val artifact = staged ?: return retained
             return try {
                 journal(JournalPhase.CLEANUP, artifact,
                     inPlaceName?.let { "Removing the incomplete $it" } ?: "Removing incomplete staging data")
                 deleteTree(registry.provider(artifact), artifact, 0, reportChildren = false)
                 staged = null
-                nestedArtifacts + listOfNotNull(leftover)
+                retained
             } catch (failure: Exception) {
                 try { journal(JournalPhase.RETAINED_ARTIFACT, artifact, inPlaceName?.let {
                     "Incomplete $it retained under its real name and must be deleted or replaced: ${failure.message}"
                 } ?: "Incomplete staging data retained: ${failure.message}") }
                 catch (_: Exception) { /* Journaling failed; the returned artifact is still the recovery record. */ }
-                nestedArtifacts + listOfNotNull(leftover) + artifact
+                retained + artifact
             }
         }
 

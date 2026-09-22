@@ -93,6 +93,8 @@ enum class Feature {
      * one copies everything beneath it, so a failure can leave that partly done. Each file still appears whole.
      */
     PREFIX_FOLDERS,
+    // Replacement cannot exclude concurrent changes at the destination.
+    UNGUARDED_REPLACE,
 }
 
 /** Implemented by providers whose references map to local filesystem paths. */
@@ -133,7 +135,7 @@ class StorageException(
     cause: Throwable? = null,
 ) : IOException(message, cause)
 
-/** Called by [StorageProvider.commit] with a backup it could not delete and a message for the journal. */
+// Journals backup addresses and their disposition, including before network mutations with uncertain outcomes.
 typealias RetainedObjects = suspend (NodeRef, String) -> Unit
 
 /**

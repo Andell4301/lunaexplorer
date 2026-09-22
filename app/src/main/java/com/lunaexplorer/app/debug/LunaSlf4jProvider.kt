@@ -9,6 +9,7 @@ import org.slf4j.helpers.BasicMarkerFactory
 import org.slf4j.helpers.LegacyAbstractLogger
 import org.slf4j.helpers.MessageFormatter
 import org.slf4j.helpers.NOPMDCAdapter
+import org.slf4j.helpers.NOPLogger
 import org.slf4j.spi.MDCAdapter
 import org.slf4j.spi.SLF4JServiceProvider
 import java.util.concurrent.ConcurrentHashMap
@@ -16,7 +17,11 @@ import java.util.concurrent.ConcurrentHashMap
 /** SLF4J loads this class by reflection through the `slf4j.provider` property, so R8 must keep its constructor. */
 class LunaSlf4jProvider : SLF4JServiceProvider {
     private val loggers = ConcurrentHashMap<String, Logger>()
-    private val factory = ILoggerFactory { name -> loggers.getOrPut(name) { BridgedLogger(name) } }
+    private val factory = ILoggerFactory { name ->
+        // SSHJ logs raw malformed packets and untrusted server messages, which may contain credentials.
+        if (name.startsWith("net.schmizz.") || name.startsWith("com.hierynomus.sshj.")) NOPLogger.NOP_LOGGER
+        else loggers.getOrPut(name) { BridgedLogger(name) }
+    }
     private val markers = BasicMarkerFactory()
     private val mdc = NOPMDCAdapter()
 

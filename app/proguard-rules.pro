@@ -79,3 +79,11 @@
 -keep class com.lunaexplorer.app.debug.LunaSlf4jProvider { public <init>(); }
 # Keep SMB class names readable in log tags; unused classes can still be removed.
 -keepnames class com.hierynomus.** { }
+
+# SSHJ loads Bouncy Castle algorithm mappings and implementations by their registered names.
+-keep class org.bouncycastle.jcajce.provider.** { *; }
+-keep class org.bouncycastle.jce.provider.** { *; }
+# The SLF4J bridge suppresses SSHJ's raw packet and key parser logs by package name.
+-keepnames class net.schmizz.** { }
+# SSHJ checks for this class before reading encrypted legacy PEM keys.
+-keep interface org.bouncycastle.openssl.PEMDecryptor { *; }

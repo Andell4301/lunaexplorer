@@ -1,6 +1,6 @@
 Luna Explorer — third-party licenses and notices
 
-Inventory checked against app:releaseRuntimeClasspath on 2026-09-20.
+Inventory checked against app:releaseRuntimeClasspath on 2026-09-21.
 Dependencies retain their own licenses. This inventory includes resolved runtime
 libraries and their platform/BOM metadata; shrinking may remove unused code.
 It excludes dependencies used only for building or testing the application.
@@ -145,8 +145,10 @@ com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava
 com.google.j2objc:j2objc-annotations:3.0.0
 com.hierynomus:asn-one:0.6.0
 com.hierynomus:smbj:0.14.0
+com.hierynomus:sshj:0.40.0
 commons-codec:commons-codec:1.19.0
-commons-io:commons-io:2.20.0
+commons-io:commons-io:2.21.0
+commons-net:commons-net:3.13.0
 dev.snipme:highlights-jvm:1.1.0
 dev.snipme:highlights:1.1.0
 net.lingala.zip4j:zip4j:2.11.5
@@ -181,9 +183,11 @@ dev.rikka.shizuku:provider:13.1.5 — MIT
 dev.rikka.shizuku:shared:13.1.5 — MIT
 net.dongliu:apk-parser:2.6.10 — BSD-2-Clause
 net.engio:mbassador:1.3.0 — MIT
-org.bouncycastle:bcprov-jdk18on:1.79 — Bouncy Castle License (MIT)
+org.bouncycastle:bcpkix-jdk18on:1.80 — Bouncy Castle License (MIT)
+org.bouncycastle:bcprov-jdk18on:1.80.2 — Bouncy Castle License (MIT)
+org.bouncycastle:bcutil-jdk18on:1.80.2 — Bouncy Castle License (MIT)
 org.checkerframework:checker-qual:3.43.0 — MIT
-org.slf4j:slf4j-api:2.0.9 — MIT
+org.slf4j:slf4j-api:2.0.17 — MIT
 org.tukaani:xz:1.10 — 0BSD
 
 ARTIFACT PROVENANCE
@@ -191,8 +195,8 @@ ARTIFACT PROVENANCE
 AndroidX artifacts: https://maven.google.com/
 Other Maven artifacts: https://repo.maven.apache.org/maven2/
 A coordinate group:artifact:version identifies the published POM and binary.
-For example, org.slf4j:slf4j-api:2.0.9 corresponds to:
-https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/2.0.9/
+For example, org.slf4j:slf4j-api:2.0.17 corresponds to:
+https://repo.maven.apache.org/maven2/org/slf4j/slf4j-api/2.0.17/
 License declarations were checked in each published POM or its parent POM,
 and against packaged LICENSE/NOTICE resources where available.
 
@@ -426,8 +430,8 @@ This product includes software developed at
 The Apache Software Foundation (https://www.apache.org/).
 
 ==============================================================================
-commons-io:commons-io:2.20.0 — NOTICE
-Source: commons-io-2.20.0.jar!/META-INF/NOTICE.txt
+commons-io:commons-io:2.21.0 — NOTICE
+Source: commons-io-2.21.0.jar!/META-INF/NOTICE.txt
 ==============================================================================
 
 Apache Commons IO
@@ -446,6 +450,88 @@ Copyright 2001-2025 The Apache Software Foundation
 
 This product includes software developed at
 The Apache Software Foundation (https://www.apache.org/).
+
+==============================================================================
+commons-net:commons-net:3.13.0 — NOTICE
+Source: commons-net-3.13.0.jar!/META-INF/NOTICE.txt
+==============================================================================
+
+Apache Commons Net
+Copyright 2001-2026 The Apache Software Foundation
+
+This product includes software developed at
+The Apache Software Foundation (https://www.apache.org/).
+
+==============================================================================
+com.hierynomus:sshj:0.40.0 — NOTICE
+Source: https://raw.githubusercontent.com/hierynomus/sshj/v0.40.0/NOTICE
+==============================================================================
+
+sshj - SSHv2 library for Java
+Copyright 2010-2012 sshj contributors
+
+This product includes code derived from software developed at
+The Apache Software Foundation (http://www.apache.org/):
+
+- Apache MINA SSHD
+- Apache Commons-Net
+
+
+// Apache Mina SSHD notice
+
+   =========================================================================
+   ==  NOTICE file for use with the Apache License, Version 2.0,          ==
+   ==  in this case for the SSHD distribution.                            ==
+   =========================================================================
+
+   This product contains software developed by JCraft,Inc. and subject to
+   the following license:
+
+Copyright (c) 2002,2003,2004,2005,2006,2007,2008 Atsuhiko Yamanaka, JCraft,Inc.
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+  1. Redistributions of source code must retain the above copyright notice,
+     this list of conditions and the following disclaimer.
+
+  2. Redistributions in binary form must reproduce the above copyright
+     notice, this list of conditions and the following disclaimer in
+     the documentation and/or other materials provided with the distribution.
+
+  3. The names of the authors may not be used to endorse or promote products
+     derived from this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESSED OR IMPLIED WARRANTIES,
+INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND
+FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL JCRAFT,
+INC. OR ANY CONTRIBUTORS TO THIS SOFTWARE BE LIABLE FOR ANY DIRECT, INDIRECT,
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA,
+OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+--------------------------------------------------------------------------------
+Copyright (c) 2000 - 2006 The Legion Of The Bouncy Castle (http://www.bouncycastle.org)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal in the
+Software without restriction, including without limitation the rights to use, copy,
+modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
+and to permit persons to whom the Software is furnished to do so, subject to the
+following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ==============================================================================
 Media3 Sonic audio processor — Apache License 2.0 attribution
@@ -606,8 +692,8 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 
 ==============================================================================
-org.slf4j:slf4j-api:2.0.9 — MIT
-Source: slf4j-api-2.0.9.jar!/META-INF/LICENSE.txt
+org.slf4j:slf4j-api:2.0.17 — MIT
+Source: slf4j-api-2.0.17.jar!/META-INF/LICENSE.txt
 ==============================================================================
 
 Copyright (c) 2004-2022 QOS.ch Sarl (Switzerland)
@@ -633,8 +719,10 @@ OF CONTRACT, TORT OR OTHERWISE,  ARISING FROM, OUT OF OR IN CONNECTION
 WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 ==============================================================================
-org.bouncycastle:bcprov-jdk18on:1.79 — Bouncy Castle License
-Source: bcprov-jdk18on-1.79-sources.jar!/org/bouncycastle/LICENSE.java (licenseText)
+org.bouncycastle:bcpkix-jdk18on:1.80
+org.bouncycastle:bcprov-jdk18on:1.80.2
+org.bouncycastle:bcutil-jdk18on:1.80.2 — Bouncy Castle License
+Source: bcprov-jdk18on-1.80.2-sources.jar!/org/bouncycastle/LICENSE.java (licenseText)
 ==============================================================================
 
 Copyright (c) 2000-2023 The Legion of the Bouncy Castle Inc. (https://www.bouncycastle.org) 

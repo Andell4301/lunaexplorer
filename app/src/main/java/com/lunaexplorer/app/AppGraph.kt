@@ -6,6 +6,7 @@ import com.lunaexplorer.app.debug.DebugLog
 import com.lunaexplorer.app.storage.ApkInstaller
 import com.lunaexplorer.app.storage.AppInventory
 import com.lunaexplorer.app.storage.CredentialVault
+import com.lunaexplorer.app.storage.RemoteFailure
 import com.lunaexplorer.app.storage.DeviceStorage
 import com.lunaexplorer.app.storage.FileInspector
 import com.lunaexplorer.app.storage.IncomingStorageProvider
@@ -35,6 +36,13 @@ import com.lunaexplorer.app.storage.smb.SmbAccount
 import com.lunaexplorer.app.storage.smb.SmbConnector
 import com.lunaexplorer.app.storage.smb.SmbStorageProvider
 import com.lunaexplorer.app.storage.smb.SmbjConnector
+import com.lunaexplorer.app.storage.transfer.FtpConnector
+import com.lunaexplorer.app.storage.transfer.SshjConnector
+import com.lunaexplorer.app.storage.transfer.TransferAccount
+import com.lunaexplorer.app.storage.transfer.TransferConnector
+import com.lunaexplorer.app.storage.transfer.TransferCredentials
+import com.lunaexplorer.app.storage.transfer.TransferStorageProvider
+import com.lunaexplorer.app.storage.transfer.TransferProtocol
 import com.lunaexplorer.app.storage.storageUri
 import com.lunaexplorer.app.work.OperationQueue
 import com.lunaexplorer.core.ArchiveEngine
@@ -46,6 +54,7 @@ import com.lunaexplorer.core.OperationEngine
 import com.lunaexplorer.core.ProviderRegistry
 import com.lunaexplorer.core.RecycleBin
 import com.lunaexplorer.core.SearchEngine
+import com.lunaexplorer.core.StorageError
 import com.lunaexplorer.core.sweepArchiveStaging
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
@@ -59,6 +68,8 @@ class AppGraph(
     b2Connector: B2Connector = B2SdkConnector(),
     vaultKeys: VaultKeys = KeystoreVaultKeys(application),
     shizukuGateway: ShizukuGateway = SystemShizuku(application),
+    ftpConnector: TransferConnector = FtpConnector(),
+    sftpConnector: TransferConnector = SshjConnector(),
 ) {
     val debugLog: DebugLog = DebugLog.installed ?: DebugLog.install(application)
     val local = LocalStorageProvider(names = SystemNames(application), probe = probe)
@@ -85,11 +96,21 @@ class AppGraph(
         // Swept at startup: a process killed mid-upload leaves the part it was holding behind.
         staging = File(application.cacheDir, "b2-uploads").apply { deleteRecursively(); mkdirs() },
     )
+    @Volatile var transferAccounts: List<TransferAccount> = emptyList()
+    private fun transferCredentials(account: TransferAccount): TransferCredentials {
+        if (account.anonymous && account.protocol == TransferProtocol.FTP) {
+            return TransferCredentials()
+        }
+        val secrets = vault.secrets.value ?: throw RemoteFailure(StorageError.AUTH, "The vault is locked")
+        return secrets.transferCredentials[account.id] ?: TransferCredentials()
+    }
+    val ftp = TransferStorageProvider("ftp", { transferAccounts }, ::transferCredentials, ftpConnector)
+    val sftp = TransferStorageProvider("sftp", { transferAccounts }, ::transferCredentials, sftpConnector)
     val incoming = IncomingStorageProvider(application)
     val shizuku = ShizukuLink(shizukuGateway, CoroutineScope(SupervisorJob() + Dispatchers.Default), roots = { local.definitions() })
     // [local] stays the plain provider for callers that only map paths; everything that opens files goes through the registry.
     private val assistedLocal = AssistedLocalProvider(local, application.packageName) { shizuku.files }
-    val providers: ProviderRegistry = ProviderRegistry(listOf(assistedLocal, saf, insideArchives, smb, b2, incoming))
+    val providers: ProviderRegistry = ProviderRegistry(listOf(assistedLocal, saf, insideArchives, smb, b2, ftp, sftp, incoming))
 
     /** Whether Android closes [ref] to file managers (Android/data and Android/obb since Android 11). */
     fun closedToApps(ref: NodeRef): Boolean = assistedLocal.closes(ref)

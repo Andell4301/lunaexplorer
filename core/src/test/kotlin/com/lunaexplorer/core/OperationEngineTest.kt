@@ -125,6 +125,30 @@ class OperationEngineTest {
         assertFalse(storage.hasStages())
     }
 
+    @Test fun `a relocation whose reply was lost is not retried as a copy`() = runBlocking {
+        val source = storage.file(sourceFolder, "notes.txt", "kept")
+        storage.canRelocate = true
+        var reads = 0
+        val uncertain = object : StorageProvider by storage {
+            override suspend fun relocate(ref: NodeRef, parent: NodeRef, name: String): Entry? {
+                storage.relocate(ref, parent, name)
+                throw StorageException(StorageError.DISCONNECTED, "Reply lost")
+            }
+            override suspend fun openRead(ref: NodeRef): java.io.InputStream {
+                reads++
+                return storage.openRead(ref)
+            }
+        }
+
+        val result = OperationEngine(ProviderRegistry(listOf(uncertain))).run(request(source, OperationType.MOVE))
+
+        assertEquals(ItemStatus.FAILED, result.outcomes.single().status)
+        assertEquals(0, reads)
+        assertEquals("kept", storage.text(storage.childRef(destination, "notes.txt")!!))
+        assertEquals(listOf(source), storage.relocated)
+        assertFalse(storage.hasStages())
+    }
+
     @Test fun aCollidingRenameStillAsksBeforeTouchingAnything() = runBlocking {
         val source = storage.file(sourceFolder, "notes.txt", "new")
         val old = storage.file(destination, "notes.txt", "old")
@@ -362,6 +386,70 @@ class OperationEngineTest {
         assertTrue("The surviving copy must be reported as an artifact", old in outcome.artifacts)
         assertTrue("and journalled for review", events.filterIsInstance<OperationEvent.Journal>()
             .any { it.phase == JournalPhase.RETAINED_ARTIFACT && it.artifact == old })
+    }
+
+    @Test fun aBackupRetainedByAFailedReplacementIsIncludedInItsOutcome() = runBlocking {
+        val source = storage.file(sourceFolder, "notes.txt", "new")
+        val old = storage.file(destination, "notes.txt", "old")
+        val retaining = object : StorageProvider by storage {
+            override suspend fun commit(staged: NodeRef, parent: NodeRef, name: String,
+                replace: Entry?, onRetained: RetainedObjects?): Entry {
+                storage.rename(old, ".luna-replaced-notes.txt")
+                onRetained?.invoke(old, "Previous file retained")
+                throw StorageException(StorageError.DISCONNECTED, "Connection lost while publishing")
+            }
+        }
+        val result = OperationEngine(ProviderRegistry(listOf(retaining)))
+            .run(request(source, OperationType.MOVE, ConflictPolicy.REPLACE))
+
+        assertEquals(ItemStatus.FAILED, result.outcomes.single().status)
+        assertTrue(old in result.outcomes.single().artifacts)
+        assertEquals("old", storage.text(old))
+        assertEquals("new", storage.text(source))
+    }
+
+    @Test fun aBackupRetainedByAFailedRenameReplacementIsIncludedInItsOutcome() = runBlocking {
+        val source = storage.file(destination, "new.txt", "new")
+        val old = storage.file(destination, "notes.txt", "old")
+        val retaining = object : StorageProvider by storage {
+            override suspend fun commit(staged: NodeRef, parent: NodeRef, name: String,
+                replace: Entry?, onRetained: RetainedObjects?): Entry {
+                storage.rename(old, ".luna-replaced-notes.txt")
+                onRetained?.invoke(old, "Previous file retained")
+                throw StorageException(StorageError.DISCONNECTED, "Connection lost while publishing")
+            }
+        }
+        val result = OperationEngine(ProviderRegistry(listOf(retaining)))
+            .run(request(source, OperationType.RENAME, ConflictPolicy.REPLACE).copy(name = "notes.txt"))
+
+        assertEquals(ItemStatus.FAILED, result.outcomes.single().status)
+        assertTrue(old in result.outcomes.single().artifacts)
+        assertEquals("old", storage.text(old))
+        assertEquals("new", storage.text(source))
+        assertEquals(setOf(source, old), storage.list(destination).toList().flatten().map { it.ref }.toSet())
+    }
+
+    @Test fun aFailedDirectoryRenameReportsBackupsRetainedByItsMergedChildren() = runBlocking {
+        val source = storage.folder(destination, "before")
+        val fresh = storage.file(source, "notes.txt", "new")
+        val target = storage.folder(destination, "after")
+        val old = storage.file(target, "notes.txt", "old")
+        val retaining = object : StorageProvider by storage {
+            override suspend fun commit(staged: NodeRef, parent: NodeRef, name: String,
+                replace: Entry?, onRetained: RetainedObjects?): Entry {
+                storage.rename(old, ".luna-replaced-notes.txt")
+                onRetained?.invoke(old, "Previous file retained")
+                throw StorageException(StorageError.DISCONNECTED, "Connection lost while publishing")
+            }
+        }
+        val result = OperationEngine(ProviderRegistry(listOf(retaining)))
+            .run(request(source, OperationType.RENAME, ConflictPolicy.MERGE).copy(name = "after"))
+
+        assertEquals(ItemStatus.FAILED, result.outcomes.single().status)
+        assertTrue(old in result.outcomes.single().artifacts)
+        assertEquals("old", storage.text(old))
+        assertEquals("new", storage.text(fresh))
+        assertEquals(listOf(old), storage.list(target).toList().flatten().map { it.ref })
     }
 
     @Test fun folderCollisionMergesWithoutDisturbingUnrelatedChildren() = runBlocking {

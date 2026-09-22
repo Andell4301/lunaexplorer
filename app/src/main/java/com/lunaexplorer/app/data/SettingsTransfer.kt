@@ -3,6 +3,8 @@ package com.lunaexplorer.app.data
 import com.lunaexplorer.app.model.Bookmark
 import com.lunaexplorer.app.model.FolderView
 import com.lunaexplorer.app.model.Preferences
+import com.lunaexplorer.app.storage.transfer.TransferAccount
+import com.lunaexplorer.app.storage.transfer.TransferCredentials
 import com.lunaexplorer.app.storage.b2.B2Account
 import com.lunaexplorer.app.storage.smb.SmbAccount
 import kotlinx.serialization.Serializable
@@ -33,6 +35,7 @@ data class TransferSource(
     val folderViews: Map<String, FolderView> = emptyMap(),
     val smbAccounts: List<SmbAccount> = emptyList(),
     val b2Accounts: List<B2Account> = emptyList(),
+    val transferAccounts: List<TransferAccount> = emptyList(),
     val vaultLocked: Boolean = false,
     val openDefaults: List<OpenDefault> = emptyList(),
     val recordingLog: Boolean = false,
@@ -40,6 +43,7 @@ data class TransferSource(
     val passwords: Map<String, String> = emptyMap(),
     /** B2 application keys by account id, carried under the same condition. */
     val b2Keys: Map<String, String> = emptyMap(),
+    val transferCredentials: Map<String, TransferCredentials> = emptyMap(),
 )
 
 sealed interface TransferWrite {

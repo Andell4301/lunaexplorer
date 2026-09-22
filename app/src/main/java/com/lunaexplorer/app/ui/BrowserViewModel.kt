@@ -38,6 +38,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     val vault = VaultAccess(_state, graph, ::persist, ::showMessage)
     val smb = SmbAccounts(_state, graph, vault, ::persist) { refreshAccess() }
     val b2 = B2Accounts(_state, graph, vault, viewModelScope, ::persist) { refreshAccess() }
+    val servers = TransferAccounts(_state, graph, vault, viewModelScope, ::persist) { refreshAccess() }
     val openWith = OpenWith(graph, viewModelScope)
     val packages = Packages(application, graph, viewModelScope, resolver, state, ::showMessage) { loadDirectory(force = true) }
     val files = BrowserFiles(application, graph, viewModelScope, _state, resolver,
@@ -69,7 +70,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     }
 
     val operations = BrowserOperations(graph, viewModelScope, _state, resolver, ::showMessage)
-    val transfer = SettingsTransfer(application, graph, viewModelScope, _state, resolver, vault, smb, b2, ::persist,
+    val transfer = SettingsTransfer(application, graph, viewModelScope, _state, resolver, vault, smb, b2, servers, ::persist,
         ::showMessage, ::setPreferences) { refreshAccess() }
     val archives: ArchiveEngine get() = graph.archives
     val tools = StorageTools(application, graph, viewModelScope, resolver, { _state.value.roots },
@@ -392,10 +393,14 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     private var unlockJob: Job? = null
 
     /** When opening fails for lack of a [password], [Overlay.ArchivePassword] asks for one and retries. */
-    fun browseArchive(entry: Entry, password: String? = null) {
+    fun browseArchive(
+        entry: Entry,
+        password: String? = null,
+        location: Location? = (_state.value.view as? View.Folder)?.listingLocation,
+    ) {
         // A nested archive is read through its parent archive, so the parent's password comes first.
         if (password == null && entry.ref.provider == graph.insideArchives.id && graph.insideArchives.needsPassword(entry.ref)) {
-            requireArchivePassword(entry) { browseArchive(entry) }
+            requireArchivePassword(entry) { browseArchive(entry, location = location) }
             return
         }
         cancelArchiveOpening()
@@ -423,7 +428,6 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
                 if (password != null) settlePasswordPrompt(entry, error = null, dismiss = true)
                 // Ignore the result if the tab, folder or screen changed during loading.
                 if (origin() != from) return@launch
-                val location = _state.value.location
                 navigate(
                     if (location == null) Location(listOf(Crumb(root, entry.name)))
                     else Location(location.crumbs + Crumb(root, entry.name)),
@@ -444,7 +448,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
                             showMessage(error.message ?: "This archive could not be opened")
                         }
                         password == null -> askArchivePassword(entry,
-                            attempt = { typed -> browseArchive(entry, typed) },
+                            attempt = { typed -> browseArchive(entry, typed, location) },
                             giveUp = { cancelArchiveOpening() })
                         else -> settlePasswordPrompt(entry, error.message ?: "Wrong password")
                     }
@@ -557,13 +561,12 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
         loadDirectory(); persist()
     }
 
-    fun openFolder(entry: Entry) {
+    fun openFolder(entry: Entry, location: Location? = (_state.value.view as? View.Folder)?.listingLocation) {
         if (!entry.directory) return
-        val location = _state.value.location ?: return
+        if (_state.value.location == null) return
         parkFlatView()
-        // A search result can sit anywhere below the current folder, so it starts a breadcrumb chain of its own.
-        navigate(if (_state.value.searchActive) Location(listOf(Crumb(entry.ref, entry.name)))
-            else Location(location.crumbs + Crumb(entry.ref, entry.name)))
+        // Retained rows still belong to their displayed location while another folder loads.
+        navigate(Location(location?.crumbs.orEmpty() + Crumb(entry.ref, entry.name)))
     }
 
     private fun openStartFolder(path: String) {
@@ -760,7 +763,9 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     private fun SearchFilter.withHiddenSetting() = copy(includeHidden = _state.value.preferences.showHidden)
 
     private fun folderView(state: BrowserState, ref: NodeRef): View.Folder =
-        (state.view as? View.Folder)?.takeIf { it.ref == ref } ?: View.Folder(ref)
+        (state.view as? View.Folder)?.takeIf { it.ref == ref }
+            ?: View.Folder(ref, listingRef = state.listingRef,
+                listingLocation = (state.view as? View.Folder)?.listingLocation)
 
     fun pullToRefresh() {
         _state.update { it.copy(refreshing = true) }
@@ -783,7 +788,8 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
         flat?.let { session -> if (session.parkedAt == null) endFlat(session.tabId) else session.showing = false }
         browseJob?.cancel()
         val token = ++generation
-        val ref = _state.value.location?.ref ?: return
+        val location = _state.value.location ?: return
+        val ref = location.ref
         allEntries = emptyList()
 
         // Show cached rows immediately and re-read unless the cache is still fresh.
@@ -802,7 +808,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
                     _state.update {
                         it.copy(view = View.Folder(ref, cached.directory, cached.path,
                                 folderKey = cached.path ?: (it.view as? View.Folder)?.folderKey, listingRef = ref,
-                                closedToApps = cached.closedToApps),
+                                listingLocation = location, closedToApps = cached.closedToApps),
                             entries = sorted, sections = runs, loading = false, error = null, errorReason = null,
                             selected = reveal?.let { want -> setOf(want) }
                                 ?: if (preserveSelection) it.selected else emptySet(),
@@ -819,7 +825,9 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
         if (cached == null) {
             _state.update { it.copy(loading = true, error = null, errorReason = null,
                 selected = if (preserveSelection) it.selected else emptySet(),
-                view = View.Folder(ref), searching = false, extensions = emptySet()) }
+                view = View.Folder(ref, listingRef = it.listingRef,
+                    listingLocation = (it.view as? View.Folder)?.listingLocation),
+                searching = false, extensions = emptySet()) }
         } else {
             _state.update { it.copy(loading = true) }
         }
@@ -849,14 +857,14 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
                     // rows are replaced only by the complete listing.
                     if (cached == null && System.nanoTime() - lastPublished > 150_000_000L &&
                         accumulated.size >= lastPublishedSize + (lastPublishedSize / 2).coerceAtLeast(256)) {
-                        publishEntries(accumulated, token)
+                        publishEntries(accumulated, location, token)
                         published = true
                         lastPublished = System.nanoTime()
                         lastPublishedSize = accumulated.size
                     }
                 }
                 val unchanged = cached != null && sameListing(cached.entries, accumulated)
-                if (!unchanged || !published) publishEntries(accumulated, token)
+                if (!unchanged || !published) publishEntries(accumulated, location, token)
                 cacheListing(ref, folder, path, accumulated.toList(), closed)
                 DebugLog.i(BROWSE) { "Listed $where: ${accumulated.size} items in ${DebugLog.millisSince(started)} ms" }
                 if (token == generation) _state.update { it.copy(loading = false, refreshing = false) }
@@ -876,7 +884,8 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
                 }
                 if (token == generation) _state.update {
                     it.copy(loading = false, refreshing = false, entries = emptyList(), sections = emptyList(),
-                        view = folderView(it, ref).let { view -> view.copy(listingRef = ref, path = view.path ?: shown, closedToApps = closed) },
+                        view = folderView(it, ref).let { view -> view.copy(listingRef = ref, listingLocation = location,
+                            path = view.path ?: shown, closedToApps = closed) },
                         error = readableError(error, network = ref.provider !in PLATFORM_PROVIDERS),
                         errorReason = (error as? StorageException)?.reason)
                 }
@@ -884,7 +893,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
         }
     }
 
-    private suspend fun publishEntries(entries: List<Entry>, token: Long) {
+    private suspend fun publishEntries(entries: List<Entry>, location: Location, token: Long) {
         if (token != generation) return
         allEntries = entries.toList()
         val preferences = _state.value.preferences
@@ -896,7 +905,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
         if (reveal != null) pendingReveal = null
         if (token == generation && _state.value.preferences == preferences) _state.update {
             it.copy(entries = visible, sections = runs,
-                view = (it.view as? View.Folder)?.copy(listingRef = it.location?.ref) ?: it.view,
+                view = (it.view as? View.Folder)?.copy(listingRef = location.ref, listingLocation = location) ?: it.view,
                 selected = reveal?.let { ref -> setOf(ref) } ?: it.selected.keptIn(visible))
         }
     }
@@ -1645,6 +1654,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
             // Accounts must be in place before their roots are enumerated.
             graph.smbAccounts = initial.smbAccounts
             graph.b2Accounts = initial.b2Accounts
+            graph.transferAccounts = initial.transferAccounts
             val roots = try { loadRoots(initial.preferences) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
@@ -1664,6 +1674,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
             advertiseViewers(initial.preferences.openWithLuna)
             smb.apply()
             b2.apply()
+            servers.apply()
             if (!initial.vaultLocked) withContext(Dispatchers.IO) { vault.open() }
             // Catch failures here so the refresh and the collectors below still run.
             try {

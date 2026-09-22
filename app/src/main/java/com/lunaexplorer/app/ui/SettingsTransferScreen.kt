@@ -42,7 +42,7 @@ internal fun SettingsTransferPage(
 
     var exporting by rememberSaveable { mutableStateOf(false) }
     if (reading != null) {
-        ImportTree(reading, viewModel, onClose = { viewModel.transfer.dropImport() })
+        ImportTree(reading, viewModel, actions, onClose = { viewModel.transfer.dropImport() })
         return
     }
     if (exporting) {
@@ -171,7 +171,7 @@ private fun suggestedName(): String {
 }
 
 @Composable
-private fun ImportTree(preview: TransferPreview, viewModel: BrowserViewModel, onClose: () -> Unit) {
+private fun ImportTree(preview: TransferPreview, viewModel: BrowserViewModel, actions: LunaActions, onClose: () -> Unit) {
     var chosen by rememberSaveable { mutableStateOf(preview.suggested) }
     var dropped by rememberSaveable { mutableStateOf(mapOf<String, Set<String>>()) }
     var page by rememberSaveable { mutableStateOf<String?>(null) }
@@ -226,7 +226,18 @@ private fun ImportTree(preview: TransferPreview, viewModel: BrowserViewModel, on
             }
             Spacer(Modifier.height(16.dp))
             Button(
-                onClick = { viewModel.transfer.import(chosen, kept(preview, dropped)) { onClose() } },
+                onClick = {
+                    val selected = chosen
+                    val items = kept(preview, dropped)
+                    val take = {
+                        if (viewModel.transfer.preview.value === preview) {
+                            viewModel.transfer.import(selected, items) { onClose() }
+                        }
+                    }
+                    if (viewModel.transfer.needsAuthentication(selected, items)) {
+                        actions.unlockVault { proved -> if (proved) take() }
+                    } else take()
+                },
                 enabled = chosen.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
             ) { Text("Import ${chosen.size}") }

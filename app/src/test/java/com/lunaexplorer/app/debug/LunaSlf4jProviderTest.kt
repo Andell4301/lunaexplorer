@@ -88,4 +88,18 @@ class LunaSlf4jProviderTest {
             if (before == null) System.clearProperty("slf4j.provider") else System.setProperty("slf4j.provider", before)
         }
     }
+
+    @Test fun `SSH packet and key parser errors cannot write credentials to the log`() {
+        log.setRecording(true)
+        val loggers = LunaSlf4jProvider().loggerFactory
+        loggers.getLogger("net.schmizz.sshj.transport.Decoder").error("Malformed packet: {}", "password secret")
+        loggers.getLogger("com.hierynomus.sshj.userauth.keyprovider.OpenSSHKeyV1KeyFile")
+            .warn("Cannot parse private key", IOException("private key secret"))
+        logger.info("A storage operation failed")
+
+        val text = log.snapshot().text
+        assertFalse(text.contains("password secret"))
+        assertFalse(text.contains("private key secret"))
+        assertTrue(text.contains("A storage operation failed"))
+    }
 }

@@ -146,6 +146,10 @@ object SettingsRegistry {
         add(smbPasswords())
         add(networkThumbnails("network.smbThumbnails", "SMB thumbnails", provider = "smb"))
         add(b2Accounts())
+        add(transferAccounts())
+        add(transferCredentials())
+        add(networkThumbnails("network.ftpThumbnails", "FTP thumbnails", provider = "ftp"))
+        add(networkThumbnails("network.sftpThumbnails", "SFTP thumbnails", provider = "sftp"))
         add(b2Keys())
         add(networkThumbnails("network.b2Thumbnails", "B2 thumbnails", provider = "b2"))
         add(choice("network.b2Deleting", "Network", "Deleting on B2", VersionedDelete.entries,

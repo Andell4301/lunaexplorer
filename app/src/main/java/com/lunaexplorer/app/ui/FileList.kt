@@ -60,12 +60,13 @@ internal fun BrowserContent(
 ) {
     val tabScrollState = rememberSaveableStateHolder()
     val archives = LocalArchives.current
-    val openEntry: (Entry) -> Unit = remember(viewModel, archives, state.selected.isEmpty()) { { entry ->
+    val listingLocation = (state.view as? View.Folder)?.listingLocation
+    val openEntry: (Entry) -> Unit = remember(viewModel, archives, state.selected.isEmpty(), listingLocation) { { entry ->
         when {
             state.selected.isNotEmpty() -> viewModel.toggleSelection(entry.ref)
-            entry.directory -> viewModel.openFolder(entry)
+            entry.directory -> viewModel.openFolder(entry, listingLocation)
             viewModel.packages.isPackage(entry) -> onPackage(entry)
-            archives != null && opensAsArchive(entry, archives) -> viewModel.browseArchive(entry)
+            archives != null && opensAsArchive(entry, archives) -> viewModel.browseArchive(entry, location = listingLocation)
             else -> onOpen(entry)
         }
     } }

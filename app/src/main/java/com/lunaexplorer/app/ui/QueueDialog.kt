@@ -161,3 +161,14 @@ private fun OperationRow(
     }
     HorizontalDivider(Modifier.padding(horizontal = 18.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = .5f))
 }
+
+@Composable
+internal fun OverwriteWarning(onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Overwrite?") },
+        text = { Text("FTP cannot protect against concurrent changes.") },
+        confirmButton = { TextButton(onClick = onConfirm) { Text("Overwrite") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}

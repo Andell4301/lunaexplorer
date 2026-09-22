@@ -6,6 +6,7 @@ import com.lunaexplorer.app.model.BrowserTab
 import com.lunaexplorer.app.model.FolderView
 import com.lunaexplorer.app.model.Location
 import com.lunaexplorer.app.model.Preferences
+import com.lunaexplorer.app.storage.transfer.TransferAccount
 import com.lunaexplorer.app.storage.b2.B2Account
 import com.lunaexplorer.app.storage.smb.SmbAccount
 import kotlinx.serialization.Serializable
@@ -23,6 +24,7 @@ data class SessionDocument(
     val folderViews: Map<String, FolderView> = emptyMap(),
     val smbAccounts: List<SmbAccount> = emptyList(),
     val b2Accounts: List<B2Account> = emptyList(),
+    val transferAccounts: List<TransferAccount> = emptyList(),
     val vaultLocked: Boolean = false,
 )
 
@@ -39,6 +41,7 @@ object SessionCodec {
         folderViews = state.folderViews,
         smbAccounts = state.smbAccounts,
         b2Accounts = state.b2Accounts,
+        transferAccounts = state.transferAccounts,
         vaultLocked = state.vaultLocked,
     ))
 
@@ -57,6 +60,7 @@ object SessionCodec {
             folderViews = document.folderViews,
             smbAccounts = document.smbAccounts,
             b2Accounts = document.b2Accounts,
+            transferAccounts = document.transferAccounts,
             vaultLocked = document.vaultLocked,
         )
     }

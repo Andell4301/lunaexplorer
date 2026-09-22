@@ -16,6 +16,7 @@ import androidx.compose.ui.window.DialogProperties
 import com.lunaexplorer.app.model.BrowserState
 import com.lunaexplorer.app.storage.b2.B2Account
 import com.lunaexplorer.app.storage.smb.SmbAccount
+import com.lunaexplorer.app.storage.transfer.TransferAccount
 
 @Composable
 internal fun SettingsScreen(
@@ -35,6 +36,7 @@ internal fun SettingsScreen(
     var network by remember { mutableStateOf<NetworkKind?>(null) }
     var editing by remember { mutableStateOf<Pair<SmbAccount, Boolean>?>(null) }
     var editingB2 by remember { mutableStateOf<Pair<B2Account, Boolean>?>(null) }
+    var editingTransfer by remember { mutableStateOf<Pair<TransferAccount, Boolean>?>(null) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var viewingLog by remember { mutableStateOf(false) }
     val recordingLog by viewModel.debugLog.recording.collectAsState()
@@ -50,6 +52,7 @@ internal fun SettingsScreen(
     val categoriesScroll = rememberScrollState()
     LaunchedEffect(mediaCategories) { if (mediaCategories) categoriesScroll.scrollTo(0) }
     val networkScroll = rememberScrollState()
+    val networkMenuScroll = rememberScrollState()
     LaunchedEffect(network) { if (network != null) networkScroll.scrollTo(0) }
     // This window covers the one the browser's own message bar is drawn in.
     val messages = remember { SnackbarHostState() }
@@ -71,6 +74,7 @@ internal fun SettingsScreen(
                 Column(Modifier.weight(1f).fastVerticalScroll(when {
                     mediaCategories -> categoriesScroll
                     network != null -> networkScroll
+                    page == SettingsPage.NETWORK -> networkMenuScroll
                     else -> scroll
                 }).padding(horizontal = 20.dp)) {
                     when (page) {
@@ -110,6 +114,9 @@ internal fun SettingsScreen(
                                 onDiscardVault = { confirmDiscard = true })
                             NetworkKind.SMB -> SmbSettings(state, onChange) { account, isNew -> editing = account to isNew }
                             NetworkKind.B2 -> B2Settings(state, viewModel) { account, isNew -> editingB2 = account to isNew }
+                            NetworkKind.FTP, NetworkKind.SFTP -> TransferSettings(requireNotNull(network), state, onChange) {
+                                account, isNew -> editingTransfer = account to isNew
+                            }
                         }
                         SettingsPage.PLAYER -> PlayerSettings(preferences, onChange)
                         SettingsPage.AUDIO -> AudioPlayerSettings(preferences, onChange)
@@ -148,6 +155,9 @@ internal fun SettingsScreen(
                 }
                 editingB2?.let { (account, isNew) ->
                     B2AccountEditor(account, isNew, viewModel, actions) { editingB2 = null }
+                }
+                editingTransfer?.let { (account, isNew) ->
+                    TransferAccountEditor(account, isNew, viewModel, actions) { editingTransfer = null }
                 }
                 if (viewingLog) DebugLogScreen(viewModel, state.directoryPath) { viewingLog = false }
                 if (confirmDiscard) {

@@ -394,6 +394,10 @@ private fun LunaScaffold(
             onConflict = viewModel.operations::resolveConflict,
             onInspect = { id -> viewModel.inspectOperation(id); dismiss() },
             onReport = actions.shareReport, onDismiss = dismiss)
+        is Overlay.Overwrite -> OverwriteWarning(
+            onDismiss = { show(Overlay.Queue) },
+            onConfirm = { viewModel.operations.confirmOverwrite(overlay) },
+        )
         is Overlay.Properties -> PropertiesScreen(overlay.entries, viewModel, dismiss)
         is Overlay.Viewer -> ViewerScreen(overlay.entry, overlay.kind, viewModel, dismiss)
         is Overlay.Package -> PackageSheet(overlay.entry, viewModel,

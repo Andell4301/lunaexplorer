@@ -1,6 +1,6 @@
 # Luna Explorer
 
-An Android file manager for local storage, document providers, SMB shares and Backblaze B2 buckets, built with Kotlin and Jetpack Compose.
+An Android file manager for local storage, document providers, SMB shares, FTP/SFTP servers and Backblaze B2 buckets, built with Kotlin and Jetpack Compose.
 
 Supports Android 8.0 (API 26) and later. Luna is in active development.
 
@@ -17,7 +17,7 @@ I'm primarily a Python and Rust developer. I'm very new to Kotlin. I'm learning,
 
 ## Features
 
-- **Storage:** internal storage, removable drives, folders granted through Android's file picker, SMB 2/3 shares, and Backblaze B2 buckets.
+- **Storage:** internal storage, removable drives, folders granted through Android's file picker, SMB 2/3 shares, FTP/FTPS and SFTP servers, and Backblaze B2 buckets.
 - **Navigation:** tabs, bookmarks, breadcrumbs, search by name, size, date and the text inside files, list and grid layouts, and folder-specific sorting.
 - **File operations:** queued copy and move, batch rename, drag and drop, conflict resolution, a recycle bin, and operation reports.
 - **Archives:** browse and extract archives; create ZIP, TAR, GZIP and XZ archives, including encrypted ZIP files.
@@ -64,7 +64,9 @@ Luna can request all-files access for shared storage or use individual folders g
 
 Android 11 and later close `Android/data` and `Android/obb` to file managers. With [Shizuku](https://shizuku.rikka.app/) installed and running, Luna can optionally browse and edit them through a small helper that Shizuku runs as the adb shell user (Settings, Storage access). The helper is part of Luna, runs only while Luna does, and touches nothing outside those folders.
 
-SMB passwords and B2 application keys are stored encrypted using Android Keystore. Optional biometric or device-credential authentication controls access to the credential vault. Network thumbnails use a download budget set per provider, with a default of 25 MB per thumbnail. B2 folder listings are saved on the device and read again only on refresh; they can be cleared under Settings, Network, Backblaze B2.
+Network passwords, SSH private keys and passphrases, and B2 application keys are stored encrypted using Android Keystore. Optional biometric or device-credential authentication controls access to the credential vault. Network thumbnails use a download budget set per provider, with a default of 25 MB per thumbnail. B2 folder listings are saved on the device and read again only on refresh; they can be cleared under Settings, Network, Backblaze B2.
+
+FTP supports anonymous or password login, with plain FTP or explicit/implicit TLS. SFTP supports passwords and imported SSH private keys, including encrypted keys; approve the server’s SHA-256 host-key fingerprint when adding a connection under Settings → Network. Both providers support uploads, downloads, folder creation, rename, move, delete and existing-file replacement. Replacements keep the previous file under a backup name until the verified copy is published. FTP/FTPS asks for confirmation before overwriting or merging: FTP checks for name conflicts before uploading or renaming, but cannot prevent concurrent server changes between that check and the command.
 
 File-operation capabilities depend on the storage provider. Copies are verified before completion; interrupted operations and cleanup failures are reported. Atomicity and recovery guarantees depend on the provider and filesystem.
 

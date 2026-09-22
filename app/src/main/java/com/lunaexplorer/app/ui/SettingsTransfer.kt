@@ -26,6 +26,7 @@ class SettingsTransfer(
     private val vault: VaultAccess,
     private val accounts: SmbAccounts,
     private val b2: B2Accounts,
+    private val servers: TransferAccounts,
     private val persist: () -> Unit,
     private val message: (String) -> Unit,
     private val setPreferences: (Preferences) -> Unit,
@@ -49,12 +50,15 @@ class SettingsTransfer(
             folderViews = current.folderViews,
             smbAccounts = current.smbAccounts,
             b2Accounts = current.b2Accounts,
+            transferAccounts = current.transferAccounts,
             vaultLocked = current.vaultLocked,
             openDefaults = _openDefaults.value,
             recordingLog = graph.debugLog.enabled,
             // A secret can outlive its account when that was removed with the vault shut; it does not travel.
             passwords = if (withPasswords) graph.vault.secrets.value?.smbPasswords.orEmpty()
                 .filterKeys { id -> current.smbAccounts.any { it.id == id } } else emptyMap(),
+            transferCredentials = if (withPasswords) graph.vault.secrets.value?.transferCredentials.orEmpty()
+                .filterKeys { id -> current.transferAccounts.any { it.id == id } } else emptyMap(),
             b2Keys = if (withPasswords) graph.vault.secrets.value?.b2Keys.orEmpty()
                 .filterKeys { id -> current.b2Accounts.any { it.id == id } } else emptyMap(),
         )
@@ -198,6 +202,16 @@ class SettingsTransfer(
 
     fun dropImport() { _preview.value = null }
 
+    fun needsAuthentication(chosen: Set<String>, items: Map<String, Set<String>>): Boolean {
+        val read = _preview.value ?: return false
+        val before = snapshot()
+        val after = SettingsPreviewer.apply(read, before, chosen, items).source
+        val changesLock = after.vaultLocked != before.vaultLocked && (!after.vaultLocked || vault.canLock())
+        val writesSecrets = after.passwords != before.passwords || after.b2Keys != before.b2Keys ||
+            after.transferCredentials != before.transferCredentials
+        return changesLock || (writesSecrets && !vault.usable())
+    }
+
     fun import(chosen: Set<String>, items: Map<String, Set<String>>, onDone: () -> Unit) {
         val read = _preview.value ?: return
         scope.launch {
@@ -214,10 +228,12 @@ class SettingsTransfer(
                     folderViews = after.folderViews,
                     smbAccounts = after.smbAccounts,
                     b2Accounts = after.b2Accounts,
+                    transferAccounts = after.transferAccounts,
                 )
             }
             accounts.apply()
             b2.apply()
+            servers.apply()
             // Another key or bucket sees other files, so listings saved under the old one go.
             after.b2Accounts.forEach { arrived ->
                 val held = before.b2Accounts.firstOrNull { it.id == arrived.id }
@@ -243,11 +259,24 @@ class SettingsTransfer(
                     it.copy(b2Keys = (it.b2Keys + after.b2Keys).filterKeys { id -> id in known })
                 }?.let { refusals += "Stored B2 keys" to it }
             }
+            if (after.transferCredentials != before.transferCredentials) {
+                val known = state.value.transferAccounts.mapTo(HashSet()) { it.id }
+                writeSecrets(after.transferCredentials, known, "server") {
+                    it.copy(transferCredentials = (it.transferCredentials + after.transferCredentials).filterKeys { id -> id in known })
+                }?.let { refusals += "Stored FTP/SFTP credentials" to it }
+            }
             // Passwords first, then the lock: relocking rewrites the file the passwords just went into.
             if (after.vaultLocked != before.vaultLocked && !vault.setLocked(after.vaultLocked)) {
                 refusals += "Keep the vault behind authentication" to "the vault could not be rewritten"
             }
             if (after.recordingLog != before.recordingLog) graph.debugLog.setRecording(after.recordingLog)
+
+            withContext(Dispatchers.IO) {
+                (before.transferAccounts + after.transferAccounts).map { it.id }.distinct().forEach {
+                    graph.ftp.disconnect(it)
+                    graph.sftp.disconnect(it)
+                }
+            }
 
             // Preferences last, through setPreferences for its side effects.
             setPreferences(after.preferences)
@@ -260,7 +289,7 @@ class SettingsTransfer(
         }
     }
 
-    private fun writeSecrets(incoming: Map<String, String>, known: Set<String>, owner: String, merge: (Secrets) -> Secrets): String? {
+    private fun <T> writeSecrets(incoming: Map<String, T>, known: Set<String>, owner: String, merge: (Secrets) -> Secrets): String? {
         if (!vault.open()) return "the vault is locked"
         val secrets = graph.vault.secrets.value ?: return "the vault could not be read"
         val orphaned = incoming.keys.count { it !in known }

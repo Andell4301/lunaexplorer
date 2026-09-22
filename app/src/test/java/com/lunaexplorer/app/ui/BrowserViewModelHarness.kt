@@ -13,6 +13,9 @@ import com.lunaexplorer.app.storage.b2.B2SdkConnector
 import com.lunaexplorer.app.storage.shizuku.FakeShizuku
 import com.lunaexplorer.app.storage.smb.SmbConnector
 import com.lunaexplorer.app.storage.smb.SmbjConnector
+import com.lunaexplorer.app.storage.transfer.FtpConnector
+import com.lunaexplorer.app.storage.transfer.SshjConnector
+import com.lunaexplorer.app.storage.transfer.TransferConnector
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.job
 import org.junit.rules.ExternalResource
@@ -36,6 +39,8 @@ class BrowserViewModelHarness : ExternalResource() {
     private var session: (BrowserState) -> BrowserState = { it }
     private var smb: SmbConnector = SmbjConnector()
     private var b2: B2Connector = B2SdkConnector()
+    private var ftp: TransferConnector = FtpConnector()
+    private var sftp: TransferConnector = SshjConnector()
     /** Absent, as on a device without it, until a test starts it. */
     val shizuku = FakeShizuku()
     /** The keystore does not exist off a device. */
@@ -48,6 +53,10 @@ class BrowserViewModelHarness : ExternalResource() {
 
     fun withB2(connector: B2Connector): BrowserViewModelHarness { b2 = connector; return this }
 
+    fun withFtp(connector: TransferConnector): BrowserViewModelHarness { ftp = connector; return this }
+
+    fun withSftp(connector: TransferConnector): BrowserViewModelHarness { sftp = connector; return this }
+
     /** Configures the persisted session before ViewModel restoration. */
     fun withSession(block: (BrowserState) -> BrowserState): BrowserViewModelHarness { session = block; return this }
 
@@ -56,7 +65,7 @@ class BrowserViewModelHarness : ExternalResource() {
         application = RuntimeEnvironment.getApplication() as LunaApplication
         runtime.prepare(application)
 
-        graph = AppGraph(application, PathProbe.OF_FILESYSTEM, smb, b2, vaultKeys, shizuku)
+        graph = AppGraph(application, PathProbe.OF_FILESYSTEM, smb, b2, vaultKeys, shizuku, ftp, sftp)
         directory = File(temporary.root, "browsed").apply { mkdirs() }
         prepare(directory)
         graph.additionalRoots = listOf(LocalRoot("harness", "Harness", directory))

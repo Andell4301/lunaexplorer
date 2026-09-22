@@ -1,6 +1,7 @@
 package com.lunaexplorer.app.model
 
 import com.lunaexplorer.core.Entry
+import com.lunaexplorer.core.ConflictPolicy
 import com.lunaexplorer.core.NodeRef
 
 enum class ViewerKind { IMAGE, TEXT, CODE, MEDIA, DATABASE, PDF, DOCUMENT, HEX, NONE }
@@ -19,6 +20,7 @@ sealed interface Overlay {
     data object ViewOptions : Overlay
     data object Settings : Overlay
     data object Queue : Overlay
+    data class Overwrite(val operationId: String, val policy: ConflictPolicy) : Overlay
     data class EditBookmark(val bookmark: Bookmark, val list: BookmarkList) : Overlay
     data class AddBookmark(val proposal: Bookmark, val list: BookmarkList = BookmarkList.SIDEBAR) : Overlay
     data class Properties(val entries: List<Entry>) : Overlay

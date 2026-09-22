@@ -187,6 +187,20 @@ class ArchiveMemberEditTest {
         assertFalse(Capability.DELETE in member.capabilities)
     }
 
+    @Test fun `an archive requiring overwrite confirmation stays read only`() {
+        provider = MemoryStorageProvider("remote")
+        storage = Seekable(provider)
+        archives = ArchiveProvider({ registry }, stagingDirectory = temporary.newFolder())
+        val unguarded = object : StorageProvider by storage {
+            override val features = storage.features + Feature.UNGUARDED_REPLACE
+        }
+        registry = ProviderRegistry(listOf(unguarded, archives))
+        val root = alsoOpen("bundle.zip", zip("a.txt" to "a"))
+
+        assertFalse(Capability.CREATE in runBlocking { archives.stat(root) }.capabilities)
+        assertFalse(Capability.RENAME in members(root).single().capabilities)
+    }
+
     @Test fun `a file can be written into an archive`() {
         val root = open("bundle.zip", zip("one.txt" to "first"))
         val loose = loose("added.txt", "new body")

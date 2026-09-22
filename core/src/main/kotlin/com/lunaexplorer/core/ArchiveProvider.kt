@@ -328,6 +328,7 @@ class ArchiveProvider(
         read: Opened,
     ): Boolean {
         if (archiveFormatOf(label) != ArchiveFormat.ZIP) return false
+        if (Feature.UNGUARDED_REPLACE in provider.features) return false
         // A staged copy is a local cache; editing it would not change the source.
         if (read.staged != null) return false
         // A nested archive would need every enclosing archive rewritten.

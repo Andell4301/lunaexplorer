@@ -1,5 +1,6 @@
 package com.lunaexplorer.app.model
 
+import com.lunaexplorer.app.storage.transfer.TransferAccount
 import com.lunaexplorer.app.storage.b2.B2Account
 import com.lunaexplorer.app.storage.shizuku.HelperState
 import com.lunaexplorer.app.storage.smb.SmbAccount
@@ -76,6 +77,7 @@ data class BrowserState(
     val backStack: List<Screen> = emptyList(),
     val smbAccounts: List<SmbAccount> = emptyList(),
     val b2Accounts: List<B2Account> = emptyList(),
+    val transferAccounts: List<TransferAccount> = emptyList(),
     /** Outside [Preferences] because it identifies the vault's encryption key and must survive a preference reset. */
     val vaultLocked: Boolean = false,
     val searching: Boolean = false,

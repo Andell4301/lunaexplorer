@@ -1,5 +1,6 @@
 package com.lunaexplorer.app.storage
 
+import com.lunaexplorer.app.storage.transfer.TransferCredentials
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -25,6 +26,18 @@ class CredentialVaultTest {
         assertEquals("hunter2", read.smbPasswords["nas"])
         val raw = File(folder.root, "vault/credentials").readBytes().decodeToString()
         assertFalse("The file must not carry the password in the clear", raw.contains("hunter2"))
+    }
+
+    @Test fun `server passwords private keys and passphrases survive encrypted vault reopening`() {
+        val credentials = TransferCredentials(password = "server password", privateKey = "private key bytes",
+            passphrase = "key passphrase")
+        vault().save(Secrets(transferCredentials = mapOf("sftp" to credentials)), locked = false)
+
+        assertEquals(credentials, vault().open(locked = false).transferCredentials["sftp"])
+        val raw = File(folder.root, "vault/credentials").readBytes().decodeToString()
+        listOf(credentials.password, credentials.privateKey, credentials.passphrase).forEach {
+            assertFalse("A credential must not be stored in clear text", raw.contains(it))
+        }
     }
 
     @Test fun `the cipher chooses the IV on encryption, because the keystore allows nothing else`() {
