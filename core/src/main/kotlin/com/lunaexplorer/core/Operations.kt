@@ -11,7 +11,7 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
-enum class OperationType { COPY, MOVE, DELETE, RENAME, CREATE_FOLDER, CREATE_ARCHIVE, EXTRACT_ARCHIVE }
+enum class OperationType { COPY, MOVE, DELETE, RENAME, CREATE_FOLDER, CREATE_ARCHIVE, EXTRACT_ARCHIVE, PROCEDURE }
 enum class ConflictPolicy { ASK, REPLACE, SKIP, KEEP_BOTH, MERGE }
 enum class ItemStatus { SUCCESS, SKIPPED, CONFLICT, FAILED, CANCELLED }
 
@@ -26,6 +26,10 @@ data class OperationRequest(
     val archive: ArchiveSpec? = null,
     /** On a [Feature.VERSIONED] provider, hide what the user asked removed (a delete, a move's or rename's source) instead of removing every version. */
     val keepVersions: Boolean = false,
+    val steps: List<ProcedureStep> = emptyList(),
+    val procedureId: String? = null,
+    val notifyOnSuccess: Boolean = false,
+    val notifyOnFailure: Boolean = false,
 )
 
 data class ItemOutcome(
@@ -89,6 +93,7 @@ class OperationEngine(
         onEvent: suspend (OperationEvent) -> Unit = {},
     ): OperationResult = withContext(dispatcher) {
         val sources = when (request.type) {
+            OperationType.PROCEDURE -> throw IllegalArgumentException("Procedures must run through the operation queue")
             OperationType.CREATE_FOLDER -> listOf(null)
             // All sources go into one archive, so the run has a single item.
             OperationType.CREATE_ARCHIVE -> {
@@ -128,6 +133,7 @@ class OperationEngine(
                             OperationType.CREATE_FOLDER -> session.createFolder()
                             OperationType.CREATE_ARCHIVE -> session.createArchive()
                             OperationType.EXTRACT_ARCHIVE -> session.extractArchive(requireNotNull(source))
+                            OperationType.PROCEDURE -> throw IllegalArgumentException("Procedures must run through the operation queue")
                         }
                     } catch (cancelled: CancellationException) {
                         withContext(NonCancellable) {

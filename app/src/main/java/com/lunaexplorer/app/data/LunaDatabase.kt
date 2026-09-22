@@ -11,6 +11,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.lunaexplorer.app.model.BrowserState
 import com.lunaexplorer.app.model.ConflictRow
 import com.lunaexplorer.app.model.QueueItem
+import com.lunaexplorer.app.model.ProcedureRun
 import com.lunaexplorer.core.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.CancellationException
@@ -20,7 +21,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
-class LunaDatabase(private val context: Context, databaseName: String = "luna.db") : SQLiteOpenHelper(context, databaseName, null, 1) {
+class LunaDatabase(private val context: Context, databaseName: String = "luna.db") : SQLiteOpenHelper(context, databaseName, null, 2) {
     private val json = SessionCodec.json
     private fun ref(value: NodeRef): String = json.encodeToString(value)
     private fun nodeRef(text: String): NodeRef = json.decodeFromString(text)
@@ -30,20 +31,27 @@ class LunaDatabase(private val context: Context, databaseName: String = "luna.db
     private var lastPublishedAt = 0L
     private val _queue = MutableStateFlow<List<QueueItem>>(emptyList())
     val queue = _queue.asStateFlow()
+    private val _procedureRuns = MutableStateFlow<List<ProcedureRun>>(emptyList())
+    val procedureRuns = _procedureRuns.asStateFlow()
     private val _trash = MutableStateFlow<List<TrashedItem>>(emptyList())
     val trash = _trash.asStateFlow()
     override fun onConfigure(db: SQLiteDatabase) { db.setForeignKeyConstraintsEnabled(true) }
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE session (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)")
-        db.execSQL("CREATE TABLE operations (id TEXT PRIMARY KEY, created INTEGER NOT NULL, payload TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', bytes INTEGER NOT NULL DEFAULT 0, current_name TEXT NOT NULL DEFAULT '', conflicts TEXT NOT NULL DEFAULT '[]', cancelled INTEGER NOT NULL DEFAULT 0)")
+        db.execSQL("CREATE TABLE operations (id TEXT PRIMARY KEY, created INTEGER NOT NULL, payload TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', bytes INTEGER NOT NULL DEFAULT 0, current_name TEXT NOT NULL DEFAULT '', conflicts TEXT NOT NULL DEFAULT '[]', cancelled INTEGER NOT NULL DEFAULT 0, procedure_id TEXT)")
         db.execSQL("CREATE INDEX operation_order ON operations(status, created)")
+        db.execSQL("CREATE INDEX procedure_order ON operations(procedure_id, created)")
         db.execSQL("CREATE TABLE operation_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation_id TEXT NOT NULL REFERENCES operations(id), message TEXT NOT NULL, artifacts TEXT NOT NULL DEFAULT '[]', source TEXT, destination TEXT)")
         db.execSQL("CREATE INDEX event_order ON operation_events(operation_id, sequence)")
         db.execSQL(TRASH_TABLE)
         db.execSQL(OPEN_DEFAULTS_TABLE)
     }
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        throw SQLiteException("Unsupported Luna database schema: $oldVersion (expected $newVersion)")
+        if (oldVersion != 1 || newVersion != 2) {
+            throw SQLiteException("Unsupported Luna database schema: $oldVersion (expected $newVersion)")
+        }
+        db.execSQL("ALTER TABLE operations ADD COLUMN procedure_id TEXT")
+        db.execSQL("CREATE INDEX procedure_order ON operations(procedure_id, created)")
     }
     private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { lock.withLock { block() } }
 
@@ -122,13 +130,46 @@ class LunaDatabase(private val context: Context, databaseName: String = "luna.db
                 }
             }
         }
+        _procedureRuns.value = readableDatabase.rawQuery(
+            "SELECT id,procedure_id,title,status,detail,created FROM operations WHERE procedure_id IS NOT NULL AND " +
+                "(status IN ('RUNNING','QUEUED') OR rowid IN (SELECT MAX(rowid) FROM operations WHERE procedure_id IS NOT NULL GROUP BY procedure_id) " +
+                "OR id IN (SELECT id FROM operations WHERE procedure_id IS NOT NULL ORDER BY created DESC,rowid DESC LIMIT 100)) " +
+                "ORDER BY created DESC,rowid DESC", null,
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(ProcedureRun(cursor.getString(0), cursor.getString(1),
+                    cursor.getString(2), cursor.getString(3), cursor.getString(4), cursor.getLong(5)))
+            }
+        }
     }
     suspend fun enqueue(request: OperationRequest, title: String) = io {
+        insertOperation(request, title)
+        publish()
+    }
+    private fun insertOperation(request: OperationRequest, title: String) {
         writableDatabase.insertOrThrow("operations", null, ContentValues().apply {
             put("id", request.id); put("created", System.currentTimeMillis()); put("payload", encodeRequest(request))
             put("title", title); put("status", "QUEUED")
+            put("procedure_id", request.procedureId)
         })
-        publish()
+    }
+    suspend fun enqueueProcedure(request: OperationRequest, title: String, scheduled: Boolean = false): Boolean = io {
+        require(request.type == OperationType.PROCEDURE && request.procedureId != null)
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val exists = db.rawQuery("SELECT 1 FROM operations WHERE id=?", arrayOf(request.id)).use { it.moveToFirst() }
+            if (exists) return@io false
+            val active = db.rawQuery("SELECT 1 FROM operations WHERE procedure_id=? AND status IN ('QUEUED','RUNNING') LIMIT 1",
+                arrayOf(request.procedureId)).use { it.moveToFirst() }
+            if (active) return@io false
+            val previous = db.rawQuery("SELECT status FROM operations WHERE procedure_id=? ORDER BY created DESC,rowid DESC LIMIT 1",
+                arrayOf(request.procedureId)).use { if (it.moveToFirst()) it.getString(0) else null }
+            if (scheduled && previous != null && previous != "SUCCEEDED") return@io false
+            insertOperation(request, title)
+            db.setTransactionSuccessful()
+            true
+        } finally { db.endTransaction(); publish() }
     }
     suspend fun request(id: String): OperationRequest? = io {
         readableDatabase.rawQuery("SELECT payload FROM operations WHERE id=?", arrayOf(id)).use { if (it.moveToFirst()) decodeRequest(it.getString(0)) else null }
@@ -178,8 +219,12 @@ class LunaDatabase(private val context: Context, databaseName: String = "luna.db
     }
     /** Call only while holding the queue's execution mutex: every RUNNING row is then stale. */
     suspend fun recoverInterrupted() = io {
+        val interrupted = readableDatabase.rawQuery("SELECT payload FROM operations WHERE status='RUNNING'", null).use { cursor ->
+            buildList { while (cursor.moveToNext()) add(decodeRequest(cursor.getString(0))) }
+        }
         writableDatabase.execSQL("UPDATE operations SET status='INTERRUPTED',detail='Execution was interrupted. Inspect the recorded results and staging objects before starting a new operation. Sources may remain alongside completed copies.' WHERE status='RUNNING'")
         publish()
+        interrupted
     }
     suspend fun claimNext(): OperationRequest? = io {
         val db = writableDatabase

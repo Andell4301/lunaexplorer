@@ -14,6 +14,7 @@ import com.lunaexplorer.app.LunaApplication
 import com.lunaexplorer.app.MainActivity
 import com.lunaexplorer.app.R
 import com.lunaexplorer.app.data.LunaDatabase
+import com.lunaexplorer.app.model.StoredProcedure
 import com.lunaexplorer.core.*
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
@@ -28,7 +29,7 @@ class OperationQueue(private val context: Context, private val database: LunaDat
     suspend fun reconnect() {
         // A live worker holds this mutex. If none does, RUNNING rows belong to an earlier process.
         if (execution.tryLock()) {
-            try { database.recoverInterrupted() } finally { execution.unlock() }
+            try { recoverInterrupted() } finally { execution.unlock() }
         }
         if (database.hasQueued()) schedule()
     }
@@ -37,24 +38,45 @@ class OperationQueue(private val context: Context, private val database: LunaDat
         database.enqueue(request, title)
         schedule()
     }
+    suspend fun enqueueProcedure(procedure: StoredProcedure, due: Long? = null): Boolean {
+        procedure.validate()
+        val request = OperationRequest(
+            id = due?.let { "procedure:${procedure.id}:$it" } ?: java.util.UUID.randomUUID().toString(),
+            type = OperationType.PROCEDURE, steps = procedure.steps, procedureId = procedure.id,
+            notifyOnSuccess = procedure.notifyOnSuccess, notifyOnFailure = procedure.notifyOnFailure,
+        )
+        val added = database.enqueueProcedure(request, procedure.name, scheduled = due != null)
+        if (added || database.hasQueued()) schedule().await()
+        return added
+    }
+    internal suspend fun recoverInterrupted() {
+        database.recoverInterrupted().forEach { request ->
+            val run = database.procedureRuns.value.firstOrNull { it.id == request.id }
+            if (run != null) ProcedureNotifications(context).post(request, run.title, run.status, run.detail)
+        }
+    }
     internal fun secretFor(id: String): String = secrets[id].orEmpty()
     internal fun forgetSecret(id: String) { secrets.remove(id) }
-    fun schedule() {
+    fun schedule(): androidx.work.Operation =
         WorkManager.getInstance(context).enqueueUniqueWork("luna-file-operations", ExistingWorkPolicy.APPEND_OR_REPLACE,
             OneTimeWorkRequestBuilder<OperationWorker>().addTag("luna-file-operations").build())
-    }
     suspend fun cancel(id: String) {
+        val waiting = database.procedureRuns.value.firstOrNull { it.id == id && it.status == "QUEUED" }
         forgetSecret(id)
         database.cancel(id)
         running[id]?.cancel(CancellationException("Cancelled by user"))
+        if (waiting != null) database.request(id)?.let { request ->
+            ProcedureNotifications(context).post(request, waiting.title, "CANCELLED", "Cancelled by user")
+        }
     }
 }
 
 class OperationWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     private val graph get() = (applicationContext as LunaApplication).graph
     override suspend fun doWork(): Result = graph.queue.execution.withLock {
-        graph.database.recoverInterrupted()
+        graph.queue.recoverInterrupted()
         if (!graph.database.hasQueued()) return@withLock Result.success()
+        graph.prepareForWork()
         // A helper still starting would send an operation on Android/data to Android itself, which refuses it.
         graph.shizuku.settled()
         try {
@@ -68,21 +90,37 @@ class OperationWorker(context: Context, parameters: WorkerParameters) : Coroutin
         while (currentCoroutineContext().isActive) {
             val request = graph.database.claimNext() ?: break
             var completedMutation = false
+            var stepNumber = 0
+            var stepType: OperationType? = null
             try {
                 supervisorScope {
                     val job = async(start = CoroutineStart.LAZY) {
                         if (graph.database.isCancelled(request.id)) throw CancellationException("Cancelled by user")
-                        graph.engine.run(request, graph.queue.secretFor(request.id)) { event ->
+                        val emit: suspend (OperationEvent) -> Unit = { event ->
                             record(event)
                             if (event is OperationEvent.ItemFinished && event.outcome.status == ItemStatus.SUCCESS) completedMutation = true
+                            if (event is OperationEvent.ItemFinished && stepType in setOf(OperationType.MOVE, OperationType.DELETE, OperationType.RENAME)) {
+                                graph.database.reconcileTrash(request.id, listOf(event.outcome))
+                            }
                         }
+                        if (request.type == OperationType.PROCEDURE) {
+                            ProcedureExecution(ProcedurePlanner(graph.providers), graph.engine).run(request,
+                                onStep = { number, step ->
+                                    if (graph.database.isCancelled(request.id)) throw CancellationException("Cancelled by user")
+                                    stepNumber = number
+                                    stepType = step.type
+                                    graph.database.journal(request.id,
+                                        "Step $number/${request.steps.size}: ${step.type.name.lowercase().replace('_', ' ')}", emptyList())
+                                }, onEvent = emit)
+                        } else graph.engine.run(request, graph.queue.secretFor(request.id), emit)
                     }
                     graph.queue.running[request.id] = job
                     val result = job.await()
                     val conflicts = result.outcomes.filter { it.status == ItemStatus.CONFLICT }
-                    graph.database.saveConflicts(request.id, conflicts)
+                    val procedure = request.type == OperationType.PROCEDURE
+                    graph.database.saveConflicts(request.id, if (procedure) emptyList() else conflicts)
                     val status = when {
-                        conflicts.isNotEmpty() -> "CONFLICT"
+                        conflicts.isNotEmpty() && !procedure -> "CONFLICT"
                         result.outcomes.all { it.status == ItemStatus.SUCCESS || it.status == ItemStatus.SKIPPED } -> "SUCCEEDED"
                         completedMutation || result.outcomes.any { it.status == ItemStatus.SUCCESS || it.destination != null } -> "PARTIAL"
                         else -> "FAILED"
@@ -91,25 +129,39 @@ class OperationWorker(context: Context, parameters: WorkerParameters) : Coroutin
                         "${it.value} ${it.key.name.lowercase()}"
                     }
                     // Extracting an archive that sits in the bin leaves it there, so its trash record stays.
-                    graph.database.reconcileTrash(request.id,
+                    if (!procedure) graph.database.reconcileTrash(request.id,
                         if (request.type == OperationType.EXTRACT_ARCHIVE) emptyList() else result.outcomes)
-                    graph.database.finish(request.id, status, conflicts.firstOrNull()?.message ?: counts)
+                    val detail = if (procedure) {
+                        if (status == "SUCCEEDED") "${request.steps.size} steps completed" + if (counts.isEmpty()) "" else " · $counts"
+                        else "Stopped at step $stepNumber: " + (result.outcomes.lastOrNull {
+                            it.status != ItemStatus.SUCCESS && it.status != ItemStatus.SKIPPED
+                        }?.message ?: counts)
+                    } else conflicts.firstOrNull()?.message ?: counts
+                    finish(request, status, detail)
                 }
             } catch (cancelled: CancellationException) {
                 withContext(NonCancellable) {
                     graph.database.reconcileTrash(request.id, emptyList())
                     val byUser = graph.database.isCancelled(request.id)
-                    graph.database.finish(request.id, if (byUser) "CANCELLED" else "INTERRUPTED",
+                    finish(request, if (byUser) "CANCELLED" else "INTERRUPTED",
                         if (byUser) "Cancelled. Completed changes remain; inspect the results."
                         else "Background execution stopped. Inspect results and staging data before retrying.")
                 }
                 currentCoroutineContext().ensureActive()
             } catch (failure: Exception) {
+                currentCoroutineContext().ensureActive()
                 graph.database.reconcileTrash(request.id, emptyList())
-                graph.database.finish(request.id, if (completedMutation) "PARTIAL" else "FAILED", failure.message ?: "Operation failed")
+                finish(request, if (completedMutation) "PARTIAL" else "FAILED", failure.message ?: "Operation failed")
             } finally { graph.queue.running.remove(request.id); graph.queue.forgetSecret(request.id) }
         }
         Result.success()
+    }
+    private suspend fun finish(request: OperationRequest, status: String, detail: String) {
+        graph.database.finish(request.id, status, detail)
+        if (request.type == OperationType.PROCEDURE) {
+            val title = graph.database.procedureRuns.value.firstOrNull { it.id == request.id }?.title ?: "Procedure"
+            ProcedureNotifications(applicationContext).post(request, title, status, detail)
+        }
     }
     private suspend fun record(event: OperationEvent) {
         // Only progress events cancel: the engine's NonCancellable cleanup must still reach its journal writes.

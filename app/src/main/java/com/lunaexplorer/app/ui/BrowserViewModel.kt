@@ -70,6 +70,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     }
 
     val operations = BrowserOperations(graph, viewModelScope, _state, resolver, ::showMessage)
+    val procedures = Procedures(graph, viewModelScope, resolver, ::showMessage)
     val transfer = SettingsTransfer(application, graph, viewModelScope, _state, resolver, vault, smb, b2, servers, ::persist,
         ::showMessage, ::setPreferences) { refreshAccess() }
     val archives: ArchiveEngine get() = graph.archives
@@ -1647,7 +1648,12 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
         }
         viewModelScope.launch {
             var sessionError: String? = null
-            val restored = try { graph.database.loadSession() } catch (e: Exception) {
+            val restored = try {
+                graph.prepareForWork()
+                graph.database.loadSession()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (e: Exception) {
+                ensureActive()
                 sessionError = "Saved navigation could not be restored: ${e.message}"; null
             }
             val initial = restored ?: BrowserState()
@@ -1681,6 +1687,8 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
                 graph.database.refreshQueue()
                 graph.database.refreshTrash()
                 graph.queue.reconnect()
+                graph.procedures.refresh()
+                graph.procedureScheduler.synchronize()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) { showMessage("Background work could not be restored: ${error.message}") }
             reload()

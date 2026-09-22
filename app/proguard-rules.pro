@@ -1,5 +1,9 @@
 # R8 rules for reflective entry points and optional dependencies.
 
+-keep class com.lunaexplorer.app.work.ProcedureScheduleWorker {
+    public <init>(android.content.Context, androidx.work.WorkerParameters);
+}
+
 # Room (via WorkManager)
 # Room 2.6.1's consumer rule omits constructors required by reflective database initialization.
 -keep class * extends androidx.room.RoomDatabase { <init>(); }

@@ -5,7 +5,9 @@ import com.lunaexplorer.app.storage.MediaCategory
 import com.lunaexplorer.app.storage.ViewerAdvertising
 import com.lunaexplorer.app.storage.b2.B2Account
 import com.lunaexplorer.app.storage.smb.SmbAccount
+import com.lunaexplorer.core.StorageException
 import kotlinx.serialization.KSerializer
+import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -21,6 +23,39 @@ internal fun interface PathCheck {
 internal var transferPathCheck: PathCheck = PathCheck { true }
 
 private val codec = TransferCodec.json
+
+internal fun storedProcedures() = TransferUnit(
+    id = "procedures.saved", page = "Stored procedures", label = "Stored procedures",
+    claims = setOf("procedures"),
+    read = { source ->
+        source.procedures.takeIf { it.isNotEmpty() }?.let {
+            codec.encodeToJsonElement(ListSerializer(StoredProcedure.serializer()), it)
+        }
+    },
+    items = { json, _ ->
+        decode(json, StoredProcedure.serializer()).map { procedure ->
+            TransferItem(procedure.id, procedure.name,
+                detail = if (procedure.schedule?.enabled == true) "Schedule disabled on import" else "",
+                probe = "")
+        }
+    },
+    write = { value, source ->
+        try {
+            val incoming = codec.decodeFromJsonElement(ListSerializer(StoredProcedure.serializer()), value.json)
+                .filter { value.keeps(it.id) }
+                .onEach { it.validate() }
+                .map { it.copy(schedule = it.schedule?.copy(enabled = false)) }
+            require(incoming.map { it.id }.distinct().size == incoming.size) { "Duplicate procedure IDs" }
+            val merged = source.procedures.map { held -> incoming.firstOrNull { it.id == held.id } ?: held } +
+                incoming.filterNot { arriving -> source.procedures.any { it.id == arriving.id } }
+            TransferWrite.Applied(source.copy(procedures = merged))
+        } catch (error: IllegalArgumentException) {
+            TransferWrite.Refused(error.message ?: "Invalid stored procedures")
+        } catch (error: StorageException) {
+            TransferWrite.Refused(error.message ?: "Invalid stored procedures")
+        }
+    },
+)
 
 internal fun bookmarks(id: String, label: String, list: BookmarkList) = TransferUnit(
     id = id, page = "Bookmarks", label = label,

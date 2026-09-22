@@ -26,8 +26,8 @@ android {
         applicationId = "com.lunaexplorer.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.2.1"
+        versionCode = 6
+        versionName = "1.3.0-dev.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; aidl = true }
@@ -147,6 +147,7 @@ val checkReleaseReflection = tasks.register("checkReleaseReflection") {
         val required = listOf(
             "Landroidx/work/impl/WorkDatabase_Impl;" to "()V",
             "Lcom/lunaexplorer/app/work/OperationWorker;" to "(Landroid/content/Context;Landroidx/work/WorkerParameters;)V",
+            "Lcom/lunaexplorer/app/work/ProcedureScheduleWorker;" to "(Landroid/content/Context;Landroidx/work/WorkerParameters;)V",
             "Landroidx/work/WorkManagerInitializer;" to "()V",
             "Lcom/lunaexplorer/app/LunaApplication;" to "()V",
             "Lcom/lunaexplorer/app/MainActivity;" to "()V",

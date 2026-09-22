@@ -48,6 +48,7 @@ data class LunaActions(
     /** The ViewModel already holds what to export: the save dialog can outlive the composition. */
     val saveSettings: (String) -> Unit = { },
     val openSettings: () -> Unit = { },
+    val requestNotifications: () -> Unit = { },
 )
 
 internal val LocalPinching = compositionLocalOf { false }

@@ -86,12 +86,15 @@ class BrowserViewModelHarness : ExternalResource() {
             // Cancelled IO can post cleanup back to Main before the database can close.
             check(awaitUntil(rounds = 2_000) { job.isCompleted }) { "Browser ViewModel did not finish cancellation" }
         } finally {
-            try { graph.database.close() }
+            try { graph.procedures.close() }
             finally {
-                try { graph.debugLog.close() }
+                try { graph.database.close() }
                 finally {
-                    try { runtime.release() }
-                    finally { temporary.delete() }
+                    try { graph.debugLog.close() }
+                    finally {
+                        try { runtime.release() }
+                        finally { temporary.delete() }
+                    }
                 }
             }
         }

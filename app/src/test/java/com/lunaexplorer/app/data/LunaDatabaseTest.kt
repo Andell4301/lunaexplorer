@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.Context
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteException
+import android.database.sqlite.SQLiteOpenHelper
 import androidx.test.core.app.ApplicationProvider
 import com.lunaexplorer.app.model.Bookmark
 import com.lunaexplorer.app.model.Destination
@@ -22,6 +23,9 @@ import com.lunaexplorer.core.ItemStatus
 import com.lunaexplorer.core.NodeRef
 import com.lunaexplorer.core.OperationRequest
 import com.lunaexplorer.core.OperationType
+import com.lunaexplorer.core.ProcedureLocation
+import com.lunaexplorer.core.ProcedureSource
+import com.lunaexplorer.core.ProcedureStep
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.runBlocking
@@ -59,7 +63,7 @@ class LunaDatabaseTest {
     @Test fun anUnsupportedDatabaseSchemaIsRefusedWithoutDeletingItsContents() = runBlocking {
         val request = operation()
         database.enqueue(request, "Queued copy")
-        database.writableDatabase.version = 2
+        database.writableDatabase.version = 3
         database.close()
         database = LunaDatabase(context, databaseName)
 
@@ -70,8 +74,47 @@ class LunaDatabaseTest {
                 assertTrue(it.moveToFirst())
                 assertEquals(request.id, it.getString(0))
             }
-            assertEquals(2, saved.version)
+            assertEquals(3, saved.version)
         }
+    }
+
+    @Test fun `upgrading a version one database preserves session queue journal and defaults`() = runBlocking {
+        val request = operation()
+        val state = BrowserState(preferences = Preferences(theme = ThemeMode.DARK))
+        database.close()
+        object : SQLiteOpenHelper(context, databaseName, null, 1) {
+            override fun onCreate(db: SQLiteDatabase) {
+                db.execSQL("CREATE TABLE session (id INTEGER PRIMARY KEY CHECK(id=1), payload TEXT NOT NULL)")
+                db.execSQL("CREATE TABLE operations (id TEXT PRIMARY KEY, created INTEGER NOT NULL, payload TEXT NOT NULL, title TEXT NOT NULL, status TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', bytes INTEGER NOT NULL DEFAULT 0, current_name TEXT NOT NULL DEFAULT '', conflicts TEXT NOT NULL DEFAULT '[]', cancelled INTEGER NOT NULL DEFAULT 0)")
+                db.execSQL("CREATE INDEX operation_order ON operations(status, created)")
+                db.execSQL("CREATE TABLE operation_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, operation_id TEXT NOT NULL REFERENCES operations(id), message TEXT NOT NULL, artifacts TEXT NOT NULL DEFAULT '[]', source TEXT, destination TEXT)")
+                db.execSQL("CREATE INDEX event_order ON operation_events(operation_id, sequence)")
+                db.execSQL("CREATE TABLE trash (id TEXT PRIMARY KEY, operation_id TEXT NOT NULL, state TEXT NOT NULL, name TEXT NOT NULL, ref TEXT NOT NULL, source_ref TEXT NOT NULL, original_parent TEXT NOT NULL, original_name TEXT NOT NULL, original_path TEXT, directory INTEGER NOT NULL, size INTEGER, deleted_at INTEGER NOT NULL)")
+                db.execSQL("CREATE TABLE open_defaults (\"key\" TEXT PRIMARY KEY, target TEXT NOT NULL, mime TEXT NOT NULL DEFAULT '', label TEXT NOT NULL DEFAULT '')")
+            }
+            override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) = error("Unexpected upgrade")
+        }.use { legacy ->
+            legacy.writableDatabase.apply {
+                execSQL("INSERT INTO session(id,payload) VALUES(1,?)", arrayOf(SessionCodec.encode(state)))
+                execSQL("INSERT INTO operations(id,created,payload,title,status) VALUES(?,1,?,'Copy','QUEUED')",
+                    arrayOf(request.id, SessionCodec.json.encodeToString(request)))
+                execSQL("INSERT INTO operation_events(operation_id,message) VALUES(?,'Staged safely')", arrayOf(request.id))
+                execSQL("INSERT INTO open_defaults(\"key\",target) VALUES('ext:txt','editor')")
+            }
+        }
+
+        database = LunaDatabase(context, databaseName)
+        assertEquals(ThemeMode.DARK, database.loadSession()!!.preferences.theme)
+        assertEquals(request, database.request(request.id))
+        database.refreshQueue()
+        assertEquals(listOf("Staged safely"), database.queue.value.single().results)
+        assertEquals("editor", database.openDefault(listOf("ext:txt"))!!.target)
+        val procedure = OperationRequest(type = OperationType.PROCEDURE, procedureId = "clean",
+            steps = listOf(ProcedureStep(OperationType.DELETE, listOf(ProcedureSource(ProcedureLocation(source))))))
+        assertTrue(database.enqueueProcedure(procedure, "Clean"))
+        assertEquals(request, database.claimNext())
+        database.finish(request.id, "SUCCEEDED", "Completed")
+        assertEquals(procedure, database.claimNext())
     }
 
     @Test fun anItemOnlyEntersTheBinWhenItsMoveActuallySucceeded() = runBlocking {
