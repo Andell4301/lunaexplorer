@@ -311,13 +311,14 @@ private fun LunaScaffold(
             viewModel.bookmarks.edit(overlay.bookmark, title, path, overlay.list)
             dismiss()
         }
-        is Overlay.AddBookmark -> AddBookmarkDialog(overlay.proposal, overlay.list, onDismiss = dismiss) { title, path, list ->
-            when (val destination = overlay.proposal.destination) {
+        is Overlay.AddBookmark -> AddBookmarkDialog(overlay.proposal, overlay.list, viewModel,
+            state.preferences.showHidden, onDismiss = dismiss) { title, destination, list ->
+            when (destination) {
                 is Destination.Tool -> viewModel.bookmarks.addScreen(destination.screen, title, list)
                 is Destination.Place ->
                     if (destination.path == null && destination.location != null) {
                         viewModel.bookmarks.addLocation(title, destination.location, destination.file, list)
-                    } else viewModel.bookmarks.add(title, path, list)
+                    } else viewModel.bookmarks.add(title, destination.path.orEmpty(), list)
             }
             dismiss()
         }

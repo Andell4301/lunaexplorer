@@ -82,8 +82,10 @@ internal fun bookmarkProposal(state: BrowserState): Bookmark {
 internal fun AddBookmarkDialog(
     proposal: Bookmark,
     initialList: BookmarkList,
+    viewModel: BrowserViewModel,
+    showHidden: Boolean,
     onDismiss: () -> Unit,
-    onAdd: (String, String, BookmarkList) -> Unit,
+    onAdd: (String, Destination, BookmarkList) -> Unit,
 ) {
     BookmarkFields(
         heading = "Add bookmark",
@@ -92,6 +94,8 @@ internal fun AddBookmarkDialog(
         destination = proposal.destination,
         showList = true,
         initialList = initialList,
+        viewModel = viewModel,
+        showHidden = showHidden,
         onDismiss = onDismiss,
         onConfirm = onAdd,
     )
@@ -110,7 +114,7 @@ internal fun EditBookmarkDialog(
         destination = bookmark.destination,
         showList = false,
         onDismiss = onDismiss,
-    ) { name, path, _ -> onSave(name, path) }
+    ) { name, destination, _ -> onSave(name, (destination as? Destination.Place)?.path.orEmpty()) }
 }
 
 @Composable
@@ -121,13 +125,26 @@ private fun BookmarkFields(
     destination: Destination,
     showList: Boolean,
     initialList: BookmarkList = BookmarkList.SIDEBAR,
+    viewModel: BrowserViewModel? = null,
+    showHidden: Boolean = false,
     onDismiss: () -> Unit,
-    onConfirm: (String, String, BookmarkList) -> Unit,
+    onConfirm: (String, Destination, BookmarkList) -> Unit,
 ) {
     val place = destination as? Destination.Place
     var name by rememberSaveable { mutableStateOf(initialName) }
     var path by rememberSaveable { mutableStateOf(place?.path.orEmpty()) }
     var list by rememberSaveable { mutableStateOf(initialList) }
+    var pickedFolder by rememberSaveable { mutableStateOf(false) }
+    var choosing by remember { mutableStateOf(false) }
+    val usePath = pickedFolder || (place != null && (place.path != null || place.location == null))
+    if (choosing && viewModel != null) {
+        FolderChooser(viewModel, showHidden, onDismiss = { choosing = false }) { chosen ->
+            path = chosen
+            pickedFolder = true
+            choosing = false
+        }
+        return
+    }
     AlertDialog(onDismissRequest = onDismiss,
         title = { Text(heading) },
         text = {
@@ -135,16 +152,20 @@ private fun BookmarkFields(
                 OutlinedTextField(value = name, onValueChange = { name = it }, singleLine = true,
                     label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
                 when {
+                    usePath -> OutlinedTextField(value = path, onValueChange = { path = it }, singleLine = true,
+                        label = { Text("Path") }, placeholder = { Text("/storage/emulated/0/Music") },
+                        modifier = Modifier.fillMaxWidth())
                     destination is Destination.Place && destination.path == null && destination.location != null ->
                         Text("Opens " + destination.location.crumbs.joinToString(" › ") { it.name },
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    destination is Destination.Place -> OutlinedTextField(value = path, onValueChange = { path = it }, singleLine = true,
-                        label = { Text("Path") }, placeholder = { Text("/storage/emulated/0/Music") },
-                        modifier = Modifier.fillMaxWidth())
                     destination is Destination.Tool -> Text("This bookmark opens ${destination.screen.title}.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                if (viewModel != null) {
+                    AssistChip(onClick = { choosing = true }, label = { Text("Browse") },
+                        leadingIcon = { Icon(Icons.Outlined.FolderOpen, null, Modifier.size(18.dp)) })
                 }
                 if (showList) {
                     SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -160,8 +181,8 @@ private fun BookmarkFields(
         },
         confirmButton = {
             // Name and path are passed on untrimmed: trailing spaces can be part of a filename.
-            TextButton(onClick = { onConfirm(name, path, list) },
-                enabled = place == null || path.isNotBlank() || (place.path == null && place.location != null)) { Text(confirm) }
+            TextButton(onClick = { onConfirm(name, if (usePath) Destination.Place(path = path) else destination, list) },
+                enabled = !usePath || path.isNotBlank()) { Text(confirm) }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
