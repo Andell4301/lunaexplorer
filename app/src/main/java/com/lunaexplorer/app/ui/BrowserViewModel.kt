@@ -30,6 +30,8 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     private val saves = Channel<BrowserState>(Channel.CONFLATED)
     private var browseJob: Job? = null
     private var generation = 0L
+    private var accessJob: Job? = null
+    private var accessGeneration = 0L
     private var allEntries = emptyList<Entry>()
     private val resolver = PathResolver(graph.providers) { _state.value.roots }
     val bookmarks = Bookmarks(_state, viewModelScope, resolver, graph.providers, ::persist, ::showMessage) {
@@ -359,12 +361,15 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     fun refreshAccess() {
         // Allowing Luna inside Shizuku's own app sends no word, so coming back is when to look.
         graph.shizuku.evaluate()
-        viewModelScope.launch {
+        accessJob?.cancel()
+        val requested = ++accessGeneration
+        accessJob = viewModelScope.launch {
             // Session restore enumerates roots and opens tabs itself.
             if (!_state.value.ready) return@launch
             val roots = try {
                 loadRoots(_state.value.preferences)
             } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { return@launch }
+            if (requested != accessGeneration) return@launch
             val previous = _state.value.roots.map { it.ref }
             val hadAccess = _state.value.fullAccess
             val fullAccess = graph.hasFullAccess()
