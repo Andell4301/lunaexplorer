@@ -32,11 +32,12 @@ abstract class RobolectricBrowserUiTest : BrowserUiTest() {
     protected fun openSettingsPage(title: String) {
         val viewModel = compose.runOnUiThread { ViewModelProvider(compose.activity)[BrowserViewModel::class.java] }
         compose.runOnUiThread { viewModel.showOverlay(Overlay.Settings) }
+        val page = hasText(title) and hasAnyAncestor(isDialog())
         compose.waitUntil(10_000) {
             compose.waitForIdle()
-            compose.onAllNodesWithText(title).fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodes(page).fetchSemanticsNodes().isNotEmpty()
         }
-        compose.onNodeWithText(title).performScrollTo().performClick()
+        compose.onNode(page).performScrollTo().performClick()
         compose.waitForIdle()
     }
 }

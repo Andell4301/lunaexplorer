@@ -11,6 +11,9 @@ import com.lunaexplorer.core.OperationType
 import com.lunaexplorer.core.ProcedureLocation
 import com.lunaexplorer.core.ProcedureSource
 import com.lunaexplorer.core.ProcedureStep
+import com.lunaexplorer.core.ProcedureCondition
+import com.lunaexplorer.core.ProcedureConditionTest
+import com.lunaexplorer.core.ProcedureControl
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
@@ -52,7 +55,9 @@ class ProcedureStoreTest {
     }
 
     @Test fun `editing a procedure preserves its place and scheduled occurrence after reopening`() = runBlocking {
-        val first = StoredProcedure(name = " First ", steps = listOf(step), schedule = schedule,
+        val stop = ProcedureStep(control = ProcedureControl.STOP, conditions = listOf(
+            ProcedureCondition(step.id, ProcedureConditionTest.NO_OUTPUT)))
+        val first = StoredProcedure(name = " First ", steps = listOf(step, stop), schedule = schedule,
             notifyOnFailure = true)
         val second = StoredProcedure(name = "Second", steps = listOf(step))
         store.save(first)

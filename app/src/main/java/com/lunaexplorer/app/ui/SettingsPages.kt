@@ -93,7 +93,8 @@ internal fun StartSettings(preferences: Preferences, directoryPath: String?, onC
     }
 }
 
-private val START_SCREENS = listOf(Screen.HOME, Screen.BROWSER, Screen.STORAGE, Screen.APPS, Screen.RECYCLE_BIN)
+private val START_SCREENS = listOf(Screen.HOME, Screen.BROWSER, Screen.STORAGE, Screen.APPS, Screen.RECYCLE_BIN,
+    Screen.PROCEDURES)
 
 @Composable
 internal fun DocumentProviderSettings(preferences: Preferences, viewModel: BrowserViewModel, onChange: (Preferences) -> Unit) {

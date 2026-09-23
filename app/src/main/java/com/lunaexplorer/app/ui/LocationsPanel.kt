@@ -36,6 +36,7 @@ internal fun LocationsPanel(
     onRenameBookmark: (Bookmark, BookmarkList) -> Unit,
     onStorage: () -> Unit,
     onApps: () -> Unit,
+    onProcedures: () -> Unit,
     onNavigated: () -> Unit,
 ) {
     var disconnect by remember { mutableStateOf<StorageRoot?>(null) }
@@ -139,6 +140,10 @@ internal fun LocationsPanel(
             }
             item {
                 LocationRow("Applications", Icons.Outlined.Android, Hue.PACKAGE, onClick = { onNavigated(); onApps() })
+            }
+            item {
+                LocationRow("Stored procedures", Icons.Outlined.AccountTree, Hue.ACCENT,
+                    selected = state.screen == Screen.PROCEDURES, onClick = { onNavigated(); onProcedures() })
             }
             if (state.recent.isNotEmpty()) {
                 item { SectionLabel("RECENT") }

@@ -1,6 +1,7 @@
 package com.lunaexplorer.app.model
 
 import com.lunaexplorer.core.ProcedureStep
+import com.lunaexplorer.core.validateProcedureSteps
 import kotlinx.serialization.Serializable
 import java.time.Instant
 import java.time.LocalTime
@@ -19,8 +20,7 @@ data class StoredProcedure(
     fun validate() {
         require(id.isNotEmpty()) { "A procedure needs an ID" }
         require(name.isNotEmpty()) { "Enter a name" }
-        require(steps.isNotEmpty()) { "Add an action" }
-        steps.forEach { it.validate() }
+        validateProcedureSteps(steps)
         schedule?.validate()
     }
 }

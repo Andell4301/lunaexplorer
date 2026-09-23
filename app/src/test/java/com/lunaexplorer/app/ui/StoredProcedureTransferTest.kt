@@ -5,10 +5,7 @@ import com.lunaexplorer.app.LunaApplication
 import com.lunaexplorer.app.data.TransferCodec
 import com.lunaexplorer.app.model.ProcedureSchedule
 import com.lunaexplorer.app.model.StoredProcedure
-import com.lunaexplorer.core.OperationType
-import com.lunaexplorer.core.ProcedureLocation
-import com.lunaexplorer.core.ProcedureSource
-import com.lunaexplorer.core.ProcedureStep
+import com.lunaexplorer.core.*
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
@@ -26,8 +23,16 @@ class StoredProcedureTransferTest {
     @Test fun `settings export and import persist procedure definitions with schedules disabled`() {
         assertTrue(harness.awaitUntil { harness.state.ready })
         val source = requireNotNull(harness.graph.local.referenceTo(harness.directory.path))
-        val procedure = StoredProcedure(name = "Clean", steps = listOf(ProcedureStep(OperationType.DELETE,
-            listOf(ProcedureSource(ProcedureLocation(source), pattern = "*.tmp")))),
+        val clean = ProcedureStep(OperationType.DELETE,
+            listOf(ProcedureSource(ProcedureLocation(source), pattern = "*.tmp")),
+            label = "Clean temporary files", onFailure = ProcedureFailurePolicy.CONTINUE)
+        val procedure = StoredProcedure(name = "Clean", steps = listOf(clean,
+            ProcedureStep(control = ProcedureControl.STOP, conditions = listOf(
+                ProcedureCondition(clean.id, ProcedureConditionTest.FAILED),
+                ProcedureCondition(clean.id, ProcedureConditionTest.NO_OUTPUT)),
+                conditionMatch = ProcedureConditionMatch.ANY),
+            ProcedureStep(OperationType.COPY, sources = clean.sources,
+                destination = ProcedureLocation(source, listOf("backup", "temporary")), createDestination = true)),
             schedule = ProcedureSchedule(enabled = true, hour = 11), notifyOnSuccess = true)
         runBlocking { harness.graph.procedures.save(procedure) }
         val transfer = harness.viewModel.transfer

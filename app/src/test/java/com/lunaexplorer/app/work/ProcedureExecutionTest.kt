@@ -161,4 +161,155 @@ class ProcedureExecutionTest {
         assertEquals("existing", storage.text(existing))
         assertTrue(storage.stat(storage.childRef(destination, "last")!!).directory)
     }
+
+    @Test fun `conditions can combine an earlier empty result with a skipped step`() = runBlocking {
+        val file = storage.file(source, "keep.txt", "contents")
+        val selection = ProcedureStep(OperationType.DELETE,
+            listOf(ProcedureSource(ProcedureLocation(source), "*.tmp")))
+        val skipped = ProcedureStep(OperationType.DELETE, listOf(exact(file)), conditions = listOf(
+            ProcedureCondition(selection.id, ProcedureConditionTest.HAS_OUTPUT)))
+        val fallback = ProcedureStep(OperationType.CREATE_FOLDER,
+            destination = ProcedureLocation(destination), name = "fallback", conditions = listOf(
+                ProcedureCondition(selection.id, ProcedureConditionTest.NO_OUTPUT),
+                ProcedureCondition(skipped.id, ProcedureConditionTest.SKIPPED)))
+        val started = mutableListOf<Int>()
+        val finished = mutableListOf<ProcedureStepResult>()
+
+        val result = execution.run(OperationRequest(type = OperationType.PROCEDURE,
+            steps = listOf(selection, skipped, fallback)),
+            onStep = { number, _ -> started += number }, onEvent = {},
+            onStepFinished = { _, _, step -> finished += step })
+
+        assertEquals(listOf(1, 3), started)
+        assertEquals(listOf(ProcedureStepStatus.SUCCEEDED, ProcedureStepStatus.SKIPPED,
+            ProcedureStepStatus.SUCCEEDED), result.steps.map { it.status })
+        assertEquals(listOf(0, 0, 1), result.steps.map { it.outputCount })
+        assertEquals(result.steps, finished)
+        assertTrue(storage.exists(file))
+        assertNotNull(storage.childRef(destination, "fallback"))
+    }
+
+    @Test fun `a failure branch sees partial output and a later stop retains the failure`() = runBlocking {
+        val copied = storage.file(source, "copied.txt", "contents")
+        val collision = storage.file(source, "collision.txt", "new")
+        val existing = storage.file(destination, "collision.txt", "existing")
+        val copy = ProcedureStep(OperationType.COPY, listOf(exact(copied), exact(collision)),
+            ProcedureLocation(destination), onFailure = ProcedureFailurePolicy.CONTINUE)
+        val fallback = ProcedureStep(OperationType.CREATE_FOLDER,
+            destination = ProcedureLocation(destination), name = "partial", conditions = listOf(
+                ProcedureCondition(copy.id, ProcedureConditionTest.FAILED),
+                ProcedureCondition(copy.id, ProcedureConditionTest.HAS_OUTPUT)))
+        val stop = ProcedureStep(control = ProcedureControl.STOP, conditions = listOf(
+            ProcedureCondition(copy.id, ProcedureConditionTest.FAILED)))
+        val cleanup = ProcedureStep(OperationType.DELETE, listOf(exact(source)))
+
+        val result = execution.run(OperationRequest(type = OperationType.PROCEDURE,
+            steps = listOf(copy, fallback, stop, cleanup)), onStep = { _, _ -> }, onEvent = {})
+
+        assertEquals(listOf(ItemStatus.SUCCESS, ItemStatus.CONFLICT, ItemStatus.SUCCESS),
+            result.outcomes.map { it.status })
+        assertEquals(listOf(ProcedureStepStatus.FAILED, ProcedureStepStatus.SUCCEEDED,
+            ProcedureStepStatus.SUCCEEDED), result.steps.map { it.status })
+        assertEquals(1, result.steps.first().outputCount)
+        assertEquals(3, result.stoppedAt)
+        assertTrue(result.stoppedByControl)
+        assertFalse(result.successful)
+        assertTrue(result.summary().contains("1 failed"))
+        assertEquals("contents", storage.text(storage.childRef(destination, "copied.txt")!!))
+        assertEquals("existing", storage.text(existing))
+        assertNotNull(storage.childRef(destination, "partial"))
+        assertTrue(storage.exists(source))
+    }
+
+    @Test fun `a conditional stop after an empty selection succeeds without running later steps`() = runBlocking {
+        val file = storage.file(source, "keep.txt", "contents")
+        val select = ProcedureStep(OperationType.COPY,
+            listOf(ProcedureSource(ProcedureLocation(source), "*.tmp")), ProcedureLocation(destination))
+        val stop = ProcedureStep(control = ProcedureControl.STOP, conditions = listOf(
+            ProcedureCondition(select.id, ProcedureConditionTest.NO_OUTPUT)))
+        val remove = ProcedureStep(OperationType.DELETE, listOf(exact(file)))
+
+        val result = execution.run(OperationRequest(type = OperationType.PROCEDURE,
+            steps = listOf(select, stop, remove)), onStep = { _, _ -> }, onEvent = {})
+
+        assertTrue(result.successful)
+        assertTrue(result.outcomes.isEmpty())
+        assertEquals(2, result.stoppedAt)
+        assertEquals(listOf(select.id, stop.id), result.steps.map { it.stepId })
+        assertTrue(storage.exists(file))
+    }
+
+    @Test fun `missing destination folders use the engine without becoming step output`() = runBlocking {
+        val file = storage.file(source, "file.txt", "contents")
+        val copy = ProcedureStep(OperationType.COPY, listOf(exact(file)),
+            ProcedureLocation(destination, listOf("2026", "September")), createDestination = true)
+        val events = mutableListOf<OperationEvent>()
+        val request = OperationRequest(type = OperationType.PROCEDURE, steps = listOf(copy))
+
+        val result = execution.run(request, onStep = { _, _ -> }, onEvent = { events += it })
+
+        val year = requireNotNull(storage.childRef(destination, "2026"))
+        val month = requireNotNull(storage.childRef(year, "September"))
+        assertEquals("contents", storage.text(storage.childRef(month, "file.txt")!!))
+        assertEquals(listOf(ItemStatus.SUCCESS, ItemStatus.SUCCESS, ItemStatus.SUCCESS),
+            result.outcomes.map { it.status })
+        assertEquals(1, result.steps.single().outputCount)
+        assertEquals(result.outcomes, events.filterIsInstance<OperationEvent.ItemFinished>().map { it.outcome })
+        assertTrue(events.all { it.requestId == request.id })
+        assertTrue(events.filterIsInstance<OperationEvent.Journal>().any {
+            it.phase == JournalPhase.PUBLISHED && it.artifact == year
+        })
+        assertFalse(storage.hasStages())
+    }
+
+    @Test fun `an empty selection does not create the destination`() = runBlocking {
+        val copy = ProcedureStep(OperationType.COPY,
+            listOf(ProcedureSource(ProcedureLocation(source), "*.txt")),
+            ProcedureLocation(destination, listOf("unused")), createDestination = true)
+
+        val result = execution.run(OperationRequest(type = OperationType.PROCEDURE, steps = listOf(copy)),
+            onStep = { _, _ -> }, onEvent = {})
+
+        assertTrue(result.successful)
+        assertTrue(result.outcomes.isEmpty())
+        assertEquals(0, result.steps.single().outputCount)
+        assertNull(storage.childRef(destination, "unused"))
+    }
+
+    @Test fun `destination creation failure is reported once and can trigger a failure branch`() = runBlocking {
+        val file = storage.file(source, "file.txt", "contents")
+        storage.deniedCapabilities[destination] = setOf(Capability.CREATE)
+        val copy = ProcedureStep(OperationType.COPY, listOf(exact(file)),
+            ProcedureLocation(destination, listOf("missing")), createDestination = true,
+            onFailure = ProcedureFailurePolicy.CONTINUE)
+        val stop = ProcedureStep(control = ProcedureControl.STOP, conditions = listOf(
+            ProcedureCondition(copy.id, ProcedureConditionTest.FAILED)))
+        val events = mutableListOf<OperationEvent>()
+
+        val result = execution.run(OperationRequest(type = OperationType.PROCEDURE, steps = listOf(copy, stop)),
+            onStep = { _, _ -> }, onEvent = { events += it })
+
+        assertEquals(listOf(ItemStatus.FAILED), result.outcomes.map { it.status })
+        assertEquals(result.outcomes, events.filterIsInstance<OperationEvent.ItemFinished>().map { it.outcome })
+        assertEquals(ProcedureStepStatus.FAILED, result.steps.first().status)
+        assertEquals(0, result.steps.first().outputCount)
+        assertEquals(2, result.stoppedAt)
+        assertNull(storage.childRef(destination, "missing"))
+        assertTrue(storage.exists(file))
+    }
+
+    @Test fun `invalid branches are rejected before any earlier mutation`() = runBlocking {
+        val file = storage.file(source, "keep.txt", "contents")
+        val remove = ProcedureStep(OperationType.DELETE, listOf(exact(file)))
+        val stop = ProcedureStep(control = ProcedureControl.STOP, conditions = listOf(
+            ProcedureCondition("missing step", ProcedureConditionTest.FAILED)))
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                execution.run(OperationRequest(type = OperationType.PROCEDURE, steps = listOf(remove, stop)),
+                    onStep = { _, _ -> }, onEvent = {})
+            }
+        }
+        assertTrue(storage.exists(file))
+    }
 }

@@ -38,6 +38,7 @@ data class BrowserTab(
 }
 enum class Screen(val title: String) {
     BROWSER(""), HOME("Home"), RECYCLE_BIN("Recycle bin"), APPS("Applications"), STORAGE("Storage"),
+    PROCEDURES("Stored procedures"),
 }
 
 data class ArchiveOpening(val name: String, val bytesRead: Long = 0, val total: Long? = null, val fromStart: Boolean = false)

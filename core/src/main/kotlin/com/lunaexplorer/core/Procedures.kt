@@ -3,11 +3,26 @@ package com.lunaexplorer.core
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
+import java.util.UUID
 
 @Serializable
 data class ProcedureLocation(val ref: NodeRef, val children: List<String> = emptyList())
 
 enum class ProcedureEntryKind { FILES, FOLDERS, ALL }
+enum class ProcedureControl { STOP }
+enum class ProcedureConditionTest { SUCCEEDED, FAILED, SKIPPED, HAS_OUTPUT, NO_OUTPUT }
+enum class ProcedureConditionMatch { ALL, ANY }
+enum class ProcedureFailurePolicy { STOP, CONTINUE }
+enum class ProcedureStepStatus { SUCCEEDED, FAILED, SKIPPED }
+
+@Serializable
+data class ProcedureCondition(val stepId: String, val test: ProcedureConditionTest)
+
+data class ProcedureStepResult(
+    val stepId: String,
+    val status: ProcedureStepStatus,
+    val outputCount: Int = 0,
+)
 
 @Serializable
 data class ProcedureSource(
@@ -19,16 +34,33 @@ data class ProcedureSource(
 
 @Serializable
 data class ProcedureStep(
-    val type: OperationType,
+    val type: OperationType = OperationType.COPY,
     val sources: List<ProcedureSource> = emptyList(),
     val destination: ProcedureLocation? = null,
     val name: String? = null,
     val conflictPolicy: ConflictPolicy = ConflictPolicy.ASK,
     val archive: ArchiveSpec? = null,
     val keepVersions: Boolean = false,
+    val id: String = UUID.randomUUID().toString(),
+    val label: String = "",
+    val control: ProcedureControl? = null,
+    val createDestination: Boolean = false,
+    val conditions: List<ProcedureCondition> = emptyList(),
+    val conditionMatch: ProcedureConditionMatch = ProcedureConditionMatch.ALL,
+    val onFailure: ProcedureFailurePolicy = ProcedureFailurePolicy.STOP,
 ) {
     fun validate() {
+        require(id.isNotEmpty()) { "A step ID is required" }
+        if (control == ProcedureControl.STOP) {
+            require(sources.isEmpty() && destination == null && name == null && archive == null &&
+                !createDestination && !keepVersions) { "Stop does not accept file options" }
+            return
+        }
         require(type != OperationType.PROCEDURE) { "Procedures cannot contain procedures" }
+        require(!createDestination || type in setOf(OperationType.COPY, OperationType.MOVE,
+            OperationType.CREATE_FOLDER, OperationType.CREATE_ARCHIVE, OperationType.EXTRACT_ARCHIVE)) {
+            "This action does not use a destination folder"
+        }
         if (type == OperationType.CREATE_FOLDER) {
             require(sources.isEmpty()) { "Create folder does not accept sources" }
         } else {
@@ -63,10 +95,44 @@ data class ProcedureStep(
     }
 }
 
+fun validateProcedureSteps(steps: List<ProcedureStep>) {
+    require(steps.isNotEmpty()) { "Add an action" }
+    val previous = mutableSetOf<String>()
+    for (step in steps) {
+        step.validate()
+        require(step.id !in previous) { "Step IDs must be unique" }
+        require(step.conditions.all { it.stepId in previous }) { "Conditions must refer to an earlier step" }
+        previous += step.id
+    }
+}
+
+fun ProcedureStep.conditionsMet(results: List<ProcedureStepResult>): Boolean {
+    if (conditions.isEmpty()) return true
+    val byId = results.associateBy { it.stepId }
+    fun matches(condition: ProcedureCondition): Boolean {
+        val result = byId[condition.stepId] ?: return false
+        return when (condition.test) {
+            ProcedureConditionTest.SUCCEEDED -> result.status == ProcedureStepStatus.SUCCEEDED
+            ProcedureConditionTest.FAILED -> result.status == ProcedureStepStatus.FAILED
+            ProcedureConditionTest.SKIPPED -> result.status == ProcedureStepStatus.SKIPPED
+            ProcedureConditionTest.HAS_OUTPUT -> result.status != ProcedureStepStatus.SKIPPED && result.outputCount > 0
+            ProcedureConditionTest.NO_OUTPUT -> result.status != ProcedureStepStatus.SKIPPED && result.outputCount == 0
+        }
+    }
+    return when (conditionMatch) {
+        ProcedureConditionMatch.ALL -> conditions.all(::matches)
+        ProcedureConditionMatch.ANY -> conditions.any(::matches)
+    }
+}
+
 class ProcedurePlanner(private val registry: ProviderRegistry) {
-    suspend fun plan(step: ProcedureStep): List<OperationRequest> {
+    suspend fun plan(
+        step: ProcedureStep,
+        createFolder: (suspend (OperationRequest) -> OperationResult)? = null,
+    ): List<OperationRequest> {
         currentCoroutineContext().ensureActive()
         step.validate()
+        if (step.control == ProcedureControl.STOP) return emptyList()
         val selected = linkedMapOf<NodeRef, Entry>()
         for (source in step.sources) {
             currentCoroutineContext().ensureActive()
@@ -81,7 +147,7 @@ class ProcedurePlanner(private val registry: ProviderRegistry) {
             withoutDescendants(selected.values.toList())
         } else selected.keys.toList()
         val destination = step.destination?.let { location ->
-            resolve(location).also { requireFolder(it) }.ref
+            resolveDestination(location, step.createDestination, createFolder).ref
         } ?: if (step.type == OperationType.RENAME) {
             registry.provider(sources.single()).parentOf(sources.single())
         } else null
@@ -94,6 +160,40 @@ class ProcedurePlanner(private val registry: ProviderRegistry) {
             archive = step.archive,
             keepVersions = step.keepVersions,
         ))
+    }
+
+    private suspend fun resolveDestination(
+        location: ProcedureLocation,
+        create: Boolean,
+        createFolder: (suspend (OperationRequest) -> OperationResult)?,
+    ): Entry {
+        var entry = registry.provider(location.ref).stat(location.ref)
+        var throughLink = entry.link
+        requireFolder(entry)
+        for (name in location.children) {
+            currentCoroutineContext().ensureActive()
+            val provider = registry.provider(entry.ref)
+            var child = provider.child(entry.ref, name)
+            if (child == null) {
+                if (!create) throw StorageException(StorageError.NOT_FOUND, "Item not found: $name")
+                if (throughLink) throw StorageException(StorageError.UNSUPPORTED, "Cannot create folders through a folder link")
+                val prepare = requireNotNull(createFolder) { "Creating a destination requires the operation queue" }
+                val result = prepare(OperationRequest(type = OperationType.CREATE_FOLDER,
+                    destination = entry.ref, name = name, conflictPolicy = ConflictPolicy.MERGE))
+                currentCoroutineContext().ensureActive()
+                if (!result.successful) {
+                    val failure = result.outcomes.firstOrNull { it.status != ItemStatus.SUCCESS }
+                    throw StorageException(failure?.error ?: StorageError.IO,
+                        failure?.message ?: "Could not create destination folder")
+                }
+                child = provider.child(entry.ref, name)
+                    ?: throw StorageException(StorageError.NOT_FOUND, "Created folder not found: $name")
+            }
+            requireFolder(child)
+            entry = child
+            throughLink = throughLink || entry.link
+        }
+        return entry
     }
 
     private suspend fun resolve(location: ProcedureLocation): Entry {

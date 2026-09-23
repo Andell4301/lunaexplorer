@@ -48,7 +48,7 @@ internal class AssistedLocalProvider(
     /** Null for a file only the helper can open: a caller given a path would try to open it itself. */
     override fun pathOf(ref: NodeRef): String? = if (assisting(ref) != null) null else direct.pathOf(ref)
 
-    override fun shownPathOf(ref: NodeRef): String? = direct.pathOf(ref) ?: direct.locationOf(ref)?.takeIf { closed(it) }
+    override fun shownPathOf(ref: NodeRef): String? = direct.shownPathOf(ref)
 
     override suspend fun stat(ref: NodeRef): Entry = assisting(ref)?.stat(ref) ?: direct.stat(ref)
 

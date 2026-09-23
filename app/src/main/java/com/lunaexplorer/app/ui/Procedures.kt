@@ -5,9 +5,12 @@ import com.lunaexplorer.app.model.StoredProcedure
 import com.lunaexplorer.core.Entry
 import com.lunaexplorer.core.NodeRef
 import com.lunaexplorer.core.ProcedureLocation
+import com.lunaexplorer.core.StorageError
+import com.lunaexplorer.core.StorageException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.fold
 import kotlinx.coroutines.launch
@@ -68,9 +71,67 @@ class Procedures internal constructor(
         }
     }
 
-    suspend fun resolve(path: String): ProcedureLocation = withContext(Dispatchers.IO) {
+    suspend fun resolve(path: String, allowMissing: Boolean = false): ProcedureLocation = withContext(Dispatchers.IO) {
         require(path.isNotEmpty()) { "Choose a location" }
-        ProcedureLocation(requireNotNull(resolver.refFor(path)) { "Cannot resolve this path" })
+        val ref = requireNotNull(resolver.refFor(path)) { "Cannot resolve this path" }
+        if (!allowMissing) return@withContext ProcedureLocation(ref)
+        existing(ref)?.let { return@withContext anchor(it) }
+        val ancestors = ancestors(ref)
+        for (separator in path.indices.reversed().filter { path[it] == '/' }) {
+            ensureActive()
+            val base = if (separator == 0) "/" else path.substring(0, separator)
+            val parent = resolver.refFor(base) ?: continue
+            if (parent !in ancestors) continue
+            val entry = existing(parent) ?: continue
+            val anchored = anchor(entry)
+            return@withContext anchored.copy(children = anchored.children + path.substring(separator + 1).split('/'))
+        }
+        throw StorageException(StorageError.NOT_FOUND, "Choose an existing parent folder")
+    }
+
+    suspend fun resolve(location: ProcedureLocation, allowMissing: Boolean = false): ProcedureLocation = withContext(Dispatchers.IO) {
+        if (!allowMissing) return@withContext location
+        val entry = existing(location.ref)
+        val anchored = if (entry != null) anchor(entry) else {
+            val path = resolver.shownPathOf(location.ref)
+                ?: throw StorageException(StorageError.NOT_FOUND, "Choose an existing parent folder")
+            resolve(path, allowMissing = true)
+        }
+        anchored.copy(children = anchored.children + location.children)
+    }
+
+    private suspend fun existing(ref: NodeRef): Entry? = try {
+        graph.providers.provider(ref).stat(ref)
+    } catch (error: StorageException) {
+        currentCoroutineContext().ensureActive()
+        if (error.reason != StorageError.NOT_FOUND) throw error
+        null
+    }
+
+    private suspend fun ancestors(ref: NodeRef): Set<NodeRef> {
+        val seen = mutableSetOf<NodeRef>()
+        var current: NodeRef? = ref
+        while (current != null) {
+            currentCoroutineContext().ensureActive()
+            check(seen.add(current)) { "Folder cycle detected" }
+            current = graph.providers.provider(current).parentOf(current)
+        }
+        return seen
+    }
+
+    private suspend fun anchor(start: Entry): ProcedureLocation {
+        var entry = start
+        val names = ArrayDeque<String>()
+        val seen = mutableSetOf<NodeRef>()
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            check(seen.add(entry.ref)) { "Folder cycle detected" }
+            require(entry.directory) { "Not a folder" }
+            val parent = graph.providers.provider(entry.ref).parentOf(entry.ref)
+                ?: return ProcedureLocation(entry.ref, names.toList())
+            names.addFirst(entry.name)
+            entry = graph.providers.provider(parent).stat(parent)
+        }
     }
 
     suspend fun entries(ref: NodeRef): List<Entry> = withContext(Dispatchers.IO) {

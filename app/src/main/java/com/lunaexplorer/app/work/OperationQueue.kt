@@ -90,8 +90,8 @@ class OperationWorker(context: Context, parameters: WorkerParameters) : Coroutin
         while (currentCoroutineContext().isActive) {
             val request = graph.database.claimNext() ?: break
             var completedMutation = false
-            var stepNumber = 0
             var stepType: OperationType? = null
+            var procedureResult: ProcedureExecutionResult? = null
             try {
                 supervisorScope {
                     val job = async(start = CoroutineStart.LAZY) {
@@ -107,11 +107,20 @@ class OperationWorker(context: Context, parameters: WorkerParameters) : Coroutin
                             ProcedureExecution(ProcedurePlanner(graph.providers), graph.engine).run(request,
                                 onStep = { number, step ->
                                     if (graph.database.isCancelled(request.id)) throw CancellationException("Cancelled by user")
-                                    stepNumber = number
-                                    stepType = step.type
+                                    stepType = step.type.takeIf { step.control == null }
+                                    val action = step.control?.name ?: step.type.name
+                                    val title = step.label.ifEmpty { action.lowercase().replace('_', ' ') }
                                     graph.database.journal(request.id,
-                                        "Step $number/${request.steps.size}: ${step.type.name.lowercase().replace('_', ' ')}", emptyList())
-                                }, onEvent = emit)
+                                        "Step $number/${request.steps.size}: $title", emptyList())
+                                }, onEvent = emit, onStepFinished = { number, step, result ->
+                                    val action = step.control?.name ?: step.type.name
+                                    val title = step.label.ifEmpty { action.lowercase().replace('_', ' ') }
+                                    val detail = "Step $number/${request.steps.size}: $title — " +
+                                        result.status.name.lowercase() +
+                                        if (result.status == ProcedureStepStatus.SKIPPED) " (condition not met)"
+                                        else " · ${result.outputCount} items"
+                                    graph.database.journal(request.id, detail, emptyList(), detail)
+                                }).also { procedureResult = it }.operation
                         } else graph.engine.run(request, graph.queue.secretFor(request.id), emit)
                     }
                     graph.queue.running[request.id] = job
@@ -132,10 +141,7 @@ class OperationWorker(context: Context, parameters: WorkerParameters) : Coroutin
                     if (!procedure) graph.database.reconcileTrash(request.id,
                         if (request.type == OperationType.EXTRACT_ARCHIVE) emptyList() else result.outcomes)
                     val detail = if (procedure) {
-                        if (status == "SUCCEEDED") "${request.steps.size} steps completed" + if (counts.isEmpty()) "" else " · $counts"
-                        else "Stopped at step $stepNumber: " + (result.outcomes.lastOrNull {
-                            it.status != ItemStatus.SUCCESS && it.status != ItemStatus.SKIPPED
-                        }?.message ?: counts)
+                        requireNotNull(procedureResult).summary() + if (counts.isEmpty()) "" else " · $counts"
                     } else conflicts.firstOrNull()?.message ?: counts
                     finish(request, status, detail)
                 }

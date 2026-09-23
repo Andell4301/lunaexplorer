@@ -97,6 +97,7 @@ class LocalStorageProvider(
     }
 
     override fun pathOf(ref: NodeRef): String? = absolutePath(ref)
+    override fun shownPathOf(ref: NodeRef): String? = locationOf(ref)
     override fun refFor(path: String): NodeRef? = referenceTo(path)
 
     override suspend fun stat(ref: NodeRef): Entry = io { entry(rootDefinition(decode(ref).root), resolve(ref)) }

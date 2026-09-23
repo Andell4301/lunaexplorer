@@ -2,11 +2,8 @@ package com.lunaexplorer.app.data
 
 import com.lunaexplorer.app.model.ProcedureSchedule
 import com.lunaexplorer.app.model.StoredProcedure
-import com.lunaexplorer.core.NodeRef
-import com.lunaexplorer.core.OperationType
-import com.lunaexplorer.core.ProcedureLocation
-import com.lunaexplorer.core.ProcedureSource
-import com.lunaexplorer.core.ProcedureStep
+import com.lunaexplorer.core.*
+import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.*
 import org.junit.Test
@@ -16,8 +13,13 @@ class ProcedureTransferTest {
     private val step = ProcedureStep(OperationType.COPY,
         listOf(ProcedureSource(ProcedureLocation(NodeRef("local", "opaque source"), listOf(" folder ")),
             pattern = " invoice *.pdf", recursive = true)),
-        destination = ProcedureLocation(NodeRef("b2", "opaque destination")))
-    private val procedure = StoredProcedure(name = " File invoices ", steps = listOf(step),
+        destination = ProcedureLocation(NodeRef("b2", "opaque destination"), listOf(" invoices ")),
+        label = " File invoices ", createDestination = true, onFailure = ProcedureFailurePolicy.CONTINUE)
+    private val stop = ProcedureStep(control = ProcedureControl.STOP, conditions = listOf(
+        ProcedureCondition(step.id, ProcedureConditionTest.FAILED),
+        ProcedureCondition(step.id, ProcedureConditionTest.NO_OUTPUT)),
+        conditionMatch = ProcedureConditionMatch.ANY)
+    private val procedure = StoredProcedure(name = " File invoices ", steps = listOf(step, stop),
         schedule = ProcedureSchedule(enabled = true, hour = 7, minute = 30), notifyOnFailure = true)
 
     @Test fun `procedures export every action and schedule but import schedules disabled`() {
@@ -56,5 +58,27 @@ class ProcedureTransferTest {
         val badName = before.copy(procedures = listOf(procedure.copy(steps = listOf(step.copy(name = "/")))))
         val badNameDocument = TransferCodec.export(badName, setOf(unitId), "test", 0)
         assertEquals(TransferVerdict.UNREADABLE, SettingsPreviewer.of(badNameDocument, before).rows.single().verdict)
+
+        val forwardReference = before.copy(procedures = listOf(procedure.copy(steps = listOf(stop, step))))
+        val invalidBranches = TransferCodec.export(forwardReference, setOf(unitId), "test", 0)
+        val invalidPreview = SettingsPreviewer.of(invalidBranches, before)
+        assertEquals(TransferVerdict.UNREADABLE, invalidPreview.rows.single().verdict)
+        assertEquals(before, SettingsPreviewer.apply(invalidPreview, before, setOf(unitId)).source)
+    }
+
+    @Test fun `legacy steps can gain conditions and retain their references through export`() {
+        val legacy = Json.decodeFromString<StoredProcedure>("""
+            {"id":"legacy","name":"Clean","steps":[{"type":"DELETE","sources":[
+                {"location":{"ref":{"provider":"local","key":"opaque"}}}]}]}
+        """)
+        legacy.validate()
+        val updated = legacy.copy(steps = legacy.steps + ProcedureStep(control = ProcedureControl.STOP,
+            conditions = listOf(ProcedureCondition(legacy.steps.single().id, ProcedureConditionTest.NO_OUTPUT))))
+        val document = TransferCodec.export(TransferSource(procedures = listOf(updated)), setOf(unitId), "test", 0)
+        val decoded = requireNotNull(TransferCodec.decode(TransferCodec.encode(document)))
+        val before = TransferSource()
+        val preview = SettingsPreviewer.of(decoded, before)
+
+        assertEquals(listOf(updated), SettingsPreviewer.apply(preview, before, setOf(unitId)).source.procedures)
     }
 }
