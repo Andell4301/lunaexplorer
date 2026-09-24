@@ -48,6 +48,7 @@ data class LunaActions(
     /** The ViewModel already holds what to export: the save dialog can outlive the composition. */
     val saveSettings: (String) -> Unit = { },
     val openSettings: () -> Unit = { },
+    val requestNotifications: () -> Unit = { },
 )
 
 internal val LocalPinching = compositionLocalOf { false }
@@ -111,6 +112,7 @@ private fun LunaScaffold(
     val scope = rememberCoroutineScope()
     val snackbars = remember { SnackbarHostState() }
     var filtering by rememberSaveable { mutableStateOf(false) }
+    val procedureBack = remember(state.tab?.id, state.screen) { ProcedureScreenBack() }
     val show: (Overlay) -> Unit = viewModel::showOverlay
     // open/share unlocks an encrypted archive member first.
     val sharing = remember(actions, viewModel) {
@@ -155,9 +157,9 @@ private fun LunaScaffold(
             viewModel.dismissMessage()
         }
     }
-    BackHandler(enabled = viewModel.canGoBack() || state.selected.isNotEmpty() || state.openingArchive != null ||
+    BackHandler(enabled = procedureBack.available || viewModel.canGoBack() || state.selected.isNotEmpty() || state.openingArchive != null ||
         (state.screen == Screen.BROWSER && state.searchActive)) {
-        viewModel.back()
+        procedureBack.action?.invoke() ?: viewModel.back()
     }
 
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -177,6 +179,7 @@ private fun LunaScaffold(
                     onRenameBookmark = { bookmark, list -> show(Overlay.EditBookmark(bookmark, list)) },
                     onStorage = { viewModel.showScreen(Screen.STORAGE) },
                     onApps = { viewModel.showScreen(Screen.APPS) },
+                    onProcedures = { viewModel.showScreen(Screen.PROCEDURES) },
                     onNavigated = { scope.launch { drawerState.close() } })
             }
             val browser: @Composable () -> Unit = {
@@ -197,7 +200,8 @@ private fun LunaScaffold(
                                     show(Overlay.Properties(state.selectedEntries.ifEmpty { listOfNotNull(state.directory) }))
                                 },
                                 onGoToPath = { show(Overlay.GoTo) },
-                                onSystemBrowser = { actions.openSystemBrowser(state.directoryPath) })
+                                onSystemBrowser = { actions.openSystemBrowser(state.directoryPath) },
+                                onBack = if (procedureBack.available) ({ procedureBack.action?.invoke() }) else null)
                             AnimatedVisibility(
                                 visible = state.tabs.size > 1,
                                 enter = expandVertically() + fadeIn(),
@@ -271,6 +275,9 @@ private fun LunaScaffold(
                 ) { padding ->
                     Box(Modifier.padding(padding).fillMaxSize()) {
                         when (state.screen) {
+                            Screen.PROCEDURES -> key(state.tab?.id) {
+                                ProcedureScreen(state, viewModel.procedures, actions, procedureBack)
+                            }
                             Screen.RECYCLE_BIN -> RecycleBinScreen(viewModel)
                             Screen.APPS -> AppsScreen(viewModel)
                             Screen.STORAGE -> StorageScreen(state.roots, viewModel, actions,

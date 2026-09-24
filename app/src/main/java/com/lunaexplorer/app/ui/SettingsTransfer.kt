@@ -9,6 +9,8 @@ import com.lunaexplorer.app.model.Preferences
 import com.lunaexplorer.app.storage.Secrets
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
@@ -51,6 +53,7 @@ class SettingsTransfer(
             smbAccounts = current.smbAccounts,
             b2Accounts = current.b2Accounts,
             transferAccounts = current.transferAccounts,
+            procedures = graph.procedures.procedures.value,
             vaultLocked = current.vaultLocked,
             openDefaults = _openDefaults.value,
             recordingLog = graph.debugLog.enabled,
@@ -68,7 +71,7 @@ class SettingsTransfer(
     private val _openDefaults = MutableStateFlow<List<OpenDefault>>(emptyList())
     val openDefaults: StateFlow<List<OpenDefault>> = _openDefaults
 
-    fun loadOpenDefaults() { scope.launch { refreshOpenDefaults() } }
+    fun loadOpenDefaults() { scope.launch { refreshOpenDefaults(); graph.procedures.refresh() } }
 
     private suspend fun refreshOpenDefaults() {
         _openDefaults.value = runCatching { graph.database.openDefaults() }.getOrDefault(emptyList())
@@ -159,6 +162,7 @@ class SettingsTransfer(
                 onDone(false); return@launch
             }
             refreshOpenDefaults()
+            graph.procedures.refresh()
             val here = snapshot()
             // transferPathCheck is global: point it at real storage only while the preview is built.
             val known = withContext(Dispatchers.IO) { reachablePaths(document) }
@@ -246,6 +250,15 @@ class SettingsTransfer(
                 }
             }
             val refusals = mutableListOf<Pair<String, String>>()
+            if (after.procedures != before.procedures) {
+                try {
+                    graph.procedures.replace(after.procedures)
+                    graph.procedureScheduler.synchronize()
+                } catch (error: Exception) {
+                    currentCoroutineContext().ensureActive()
+                    refusals += "Stored procedures" to "they could not be written"
+                }
+            }
             // A secret whose account no longer exists is dropped.
             if (after.passwords != before.passwords) {
                 val known = state.value.smbAccounts.mapTo(HashSet()) { it.id }

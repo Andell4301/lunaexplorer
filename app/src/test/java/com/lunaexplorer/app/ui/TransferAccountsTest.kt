@@ -1,6 +1,7 @@
 package com.lunaexplorer.app.ui
 
 import android.net.Uri
+import androidx.lifecycle.viewModelScope
 import com.lunaexplorer.app.LunaApplication
 import com.lunaexplorer.app.data.TransferCodec
 import com.lunaexplorer.app.storage.transfer.FakeTransferConnector
@@ -10,7 +11,11 @@ import com.lunaexplorer.app.storage.transfer.TransferConnector
 import com.lunaexplorer.app.storage.transfer.TransferCredentials
 import com.lunaexplorer.app.storage.transfer.TransferProtocol
 import com.lunaexplorer.core.NodeRef
+import com.lunaexplorer.core.StorageProvider
+import com.lunaexplorer.core.StorageRoot
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.job
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
@@ -20,6 +25,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 @RunWith(RobolectricTestRunner::class)
@@ -69,6 +75,42 @@ class TransferAccountsTest {
         assertTrue(harness.state.transferAccounts.isEmpty())
         assertFalse(harness.graph.vault.secrets.value!!.transferCredentials.containsKey(original.id))
         assertTrue(harness.awaitUntil { harness.state.roots.none { it.ref.provider == "sftp" } })
+    }
+
+    @Test fun `an older refresh cannot restore a removed account root`() {
+        assertTrue(harness.awaitUntil { harness.state.ready })
+        val provider = harness.graph.sftp
+        val captured = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val first = AtomicBoolean(true)
+        harness.graph.providers.register(object : StorageProvider by provider {
+            override suspend fun roots(): List<StorageRoot> {
+                val roots = provider.roots()
+                if (first.getAndSet(false)) {
+                    captured.complete(Unit)
+                    release.await()
+                }
+                return roots
+            }
+        })
+        try {
+            val scope = harness.viewModel.viewModelScope.coroutineContext.job
+            val existing = scope.children.toSet()
+            assertNull(harness.viewModel.servers.save(original, null))
+            val pending = scope.children.filter { it !in existing }.toList()
+            assertTrue("The older refresh must capture the account", harness.awaitUntil { captured.isCompleted })
+
+            assertNull(harness.viewModel.servers.remove(original.id))
+            assertTrue(harness.awaitUntil { harness.state.roots.none { it.ref.provider == "sftp" } })
+            release.complete(Unit)
+            assertTrue("Both refreshes must finish", harness.awaitUntil(rounds = 2_000) { pending.all { it.isCompleted } })
+
+            assertTrue(harness.state.transferAccounts.isEmpty())
+            assertTrue("The older result must not restore the root", harness.state.roots.none { it.ref.provider == "sftp" })
+        } finally {
+            release.complete(Unit)
+            harness.graph.providers.register(provider)
+        }
     }
 
     @Test fun `an untrusted SFTP endpoint cannot be saved`() {

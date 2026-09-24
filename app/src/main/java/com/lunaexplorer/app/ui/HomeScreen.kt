@@ -11,6 +11,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.lunaexplorer.core.StorageRoot
@@ -24,7 +25,7 @@ internal fun HomeScreen(
     onRenameBookmark: (Bookmark, BookmarkList) -> Unit,
     onAddBookmark: () -> Unit,
 ) {
-    FastLazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(vertical = 12.dp)) {
+    FastLazyColumn(Modifier.fillMaxSize().testTag("home-screen"), contentPadding = PaddingValues(vertical = 12.dp)) {
         item { HomeHeading("STORAGE") }
         items(state.roots.filter { !it.hidden }, key = { "root:${it.ref.provider}:${it.ref.key}" }) { root ->
             LocationRow(root.title, rootIcon(root), rootHue(root), onClick = { viewModel.navigateRoot(root) },
@@ -87,6 +88,9 @@ internal fun HomeScreen(
                 SuggestionChip(onClick = { viewModel.showScreen(Screen.RECYCLE_BIN) },
                     label = { Text("Recycle bin") },
                     icon = { ChipIcon(Icons.Outlined.DeleteOutline, Hue.PLAIN) })
+                SuggestionChip(onClick = { viewModel.showScreen(Screen.PROCEDURES) },
+                    label = { Text("Stored procedures") },
+                    icon = { ChipIcon(Icons.Outlined.AccountTree, Hue.ACCENT) })
             }
         }
     }

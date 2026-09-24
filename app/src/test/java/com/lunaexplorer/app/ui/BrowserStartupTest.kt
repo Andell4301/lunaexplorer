@@ -77,10 +77,13 @@ class BrowserStartupTest {
             try { assertTrue("Startup did not finish cancellation", await { job.isCompleted }) }
             finally {
                 graph.b2.disconnect(account.id)
-                try { graph.database.close() }
+                try { graph.procedures.close() }
                 finally {
-                    try { graph.debugLog.close() }
-                    finally { runtime.release() }
+                    try { graph.database.close() }
+                    finally {
+                        try { graph.debugLog.close() }
+                        finally { runtime.release() }
+                    }
                 }
             }
         }

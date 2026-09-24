@@ -39,6 +39,8 @@ import com.lunaexplorer.app.ui.LocalPictureInPicture
 import com.lunaexplorer.app.ui.LunaActions
 import com.lunaexplorer.app.ui.LunaApp
 import com.lunaexplorer.app.model.ThemeMode
+import com.lunaexplorer.app.model.Overlay
+import com.lunaexplorer.app.work.ProcedureNotifications
 import com.lunaexplorer.core.Capability
 import com.lunaexplorer.core.Entry
 import kotlinx.coroutines.CancellationException
@@ -52,6 +54,7 @@ import java.util.UUID
 class MainActivity : FragmentActivity() {
     private val requestedFolder = mutableStateOf<String?>(null)
     private val requestedFile = mutableStateOf<ViewerAdvertising.ViewRequest?>(null)
+    private val requestedQueue = mutableStateOf(false)
     private lateinit var pictureInPicture: ActivityPictureInPicture
 
     // App-launched activities also trigger auto-enter PiP; startActivity routes through this override.
@@ -87,6 +90,7 @@ class MainActivity : FragmentActivity() {
         setIntent(intent)
         Shortcuts.folderFrom(intent)?.let { requestedFolder.value = it }
         ViewerAdvertising.viewRequestFrom(intent)?.let { requestedFile.value = it }
+        if (intent.action == ProcedureNotifications.ACTION) requestedQueue.value = true
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -94,6 +98,7 @@ class MainActivity : FragmentActivity() {
         requestedFolder.value = Shortcuts.folderFrom(intent)
         // On recreation the ViewModel already holds whatever this intent opened.
         if (savedInstanceState == null) requestedFile.value = ViewerAdvertising.viewRequestFrom(intent)
+        if (savedInstanceState == null) requestedQueue.value = intent.action == ProcedureNotifications.ACTION
         pictureInPicture = ActivityPictureInPicture(this)
         enableEdgeToEdge()
         setContent {
@@ -105,6 +110,13 @@ class MainActivity : FragmentActivity() {
                 }
             })
             val state by vm.state.collectAsStateWithLifecycle()
+            val pendingQueue by requestedQueue
+            LaunchedEffect(state.ready, pendingQueue) {
+                if (state.ready && pendingQueue) {
+                    requestedQueue.value = false
+                    vm.showOverlay(Overlay.Queue)
+                }
+            }
 
             // Wait for the session to be restored, or the restored tab would replace these.
             val pending by requestedFolder
@@ -181,6 +193,13 @@ class MainActivity : FragmentActivity() {
                     open = { entry, share -> openEntry(entry, share, vm) },
                     openWith = { entry, candidate, type -> openEntry(entry, share = false, vm = vm, typeOverride = type, candidate = candidate) },
                     shareReport = { id -> shareReport(id, vm) },
+                    requestNotifications = {
+                        if (Build.VERSION.SDK_INT >= 33 && ContextCompat.checkSelfPermission(this@MainActivity,
+                                Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                            notificationRequested = true
+                            notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    },
                     requestFullAccess = {
                         val intents = DeviceStorage.fullAccessSettingsIntents(this)
                         if (intents.isEmpty()) {

@@ -15,7 +15,7 @@ object SettingsRegistry {
         "Appearance", "Where Luna opens", "Files and folders", "Media categories",
         "Video player", "Audio player", "Subtitles",
         "Deleting", "Storage access", "Open with Luna", "Document provider", "Network",
-        "Bookmarks", "Default apps", "Debug log",
+        "Bookmarks", "Stored procedures", "Default apps", "Debug log",
     )
 
     val units: List<TransferUnit> = buildList {
@@ -165,6 +165,7 @@ object SettingsRegistry {
 
         add(bookmarks("bookmarks.sidebar", "Sidebar bookmarks", BookmarkList.SIDEBAR))
         add(bookmarks("bookmarks.home", "Home bookmarks", BookmarkList.HOME))
+        add(storedProcedures())
 
         add(openDefaults())
 

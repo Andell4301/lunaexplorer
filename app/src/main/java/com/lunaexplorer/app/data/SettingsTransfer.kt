@@ -3,6 +3,7 @@ package com.lunaexplorer.app.data
 import com.lunaexplorer.app.model.Bookmark
 import com.lunaexplorer.app.model.FolderView
 import com.lunaexplorer.app.model.Preferences
+import com.lunaexplorer.app.model.StoredProcedure
 import com.lunaexplorer.app.storage.transfer.TransferAccount
 import com.lunaexplorer.app.storage.transfer.TransferCredentials
 import com.lunaexplorer.app.storage.b2.B2Account
@@ -36,6 +37,7 @@ data class TransferSource(
     val smbAccounts: List<SmbAccount> = emptyList(),
     val b2Accounts: List<B2Account> = emptyList(),
     val transferAccounts: List<TransferAccount> = emptyList(),
+    val procedures: List<StoredProcedure> = emptyList(),
     val vaultLocked: Boolean = false,
     val openDefaults: List<OpenDefault> = emptyList(),
     val recordingLog: Boolean = false,

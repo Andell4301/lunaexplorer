@@ -42,6 +42,7 @@ internal fun PathBar(
     onProperties: () -> Unit,
     onGoToPath: () -> Unit,
     onSystemBrowser: () -> Unit,
+    onBack: (() -> Unit)? = null,
 ) {
     var menu by remember { mutableStateOf(false) }
     var pathMenu by remember { mutableStateOf(false) }
@@ -67,8 +68,8 @@ internal fun PathBar(
                 }
             }
             ToolIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Back",
-                enabled = viewModel.canGoBack(),
-                onClick = { viewModel.back() })
+                enabled = onBack != null || viewModel.canGoBack(),
+                onClick = onBack ?: { viewModel.back() })
 
             val tool = state.screen.takeIf { it != Screen.BROWSER }
             val category = (state.view as? View.Category)?.category

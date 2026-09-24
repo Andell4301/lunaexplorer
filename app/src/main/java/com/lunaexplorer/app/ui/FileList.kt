@@ -23,6 +23,7 @@ import androidx.compose.material3.pulltorefresh.PullToRefreshDefaults
 import androidx.compose.material3.pulltorefresh.pullToRefresh
 import androidx.compose.material3.pulltorefresh.rememberPullToRefreshState
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -74,8 +75,21 @@ internal fun BrowserContent(
     val rowThumb = remember(density) { with(density) { 40.dp.roundToPx() } }
     val tileThumb = remember(density) { with(density) { 108.dp.roundToPx() } }
 
-    val listState = rememberLazyListState()
-    val gridState = rememberLazyGridState()
+    val positions = rememberSaveable { HashMap<List<String?>, IntArray>() }
+    val listingKey = listOf(state.activeTabId, state.listingRef?.provider, state.listingRef?.key)
+    val position = positions[listingKey]
+    val listState = key(listingKey) {
+        rememberLazyListState(position?.get(0) ?: 0, position?.get(1) ?: 0)
+    }
+    val gridState = key(listingKey) {
+        rememberLazyGridState(position?.get(2) ?: 0, position?.get(3) ?: 0)
+    }
+    DisposableEffect(listingKey, listState, gridState) {
+        onDispose {
+            positions[listingKey] = intArrayOf(listState.firstVisibleItemIndex, listState.firstVisibleItemScrollOffset,
+                gridState.firstVisibleItemIndex, gridState.firstVisibleItemScrollOffset)
+        }
+    }
     val laidOut = state.preferences.inFolder(state.folderViews[state.folderKey])
 
     // Compose registers drop targets only at drag start, so rows composed mid-drag (after a tab or folder
@@ -167,25 +181,6 @@ internal fun BrowserContent(
                                 color = MaterialTheme.colorScheme.onErrorContainer)
                             TextButton(onClick = viewModel::refresh) { Text("Retry") }
                         }
-                    }
-                }
-                // Scroll position per listing, restored into the same list state on a folder change.
-                val positions = remember { HashMap<Any?, Pair<Int, Int>>() }
-                var shownRef by remember { mutableStateOf<Any?>(null) }
-                val listingKey = state.listingRef to state.activeTabId.takeIf { state.searchActive }
-                LaunchedEffect(listingKey, laidOut.view.grid) {
-                    if (shownRef != listingKey) {
-                        shownRef?.let { previous ->
-                            positions[previous] = if (laidOut.view.grid) {
-                                gridState.firstVisibleItemIndex to gridState.firstVisibleItemScrollOffset
-                            } else {
-                                listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
-                            }
-                        }
-                        shownRef = listingKey
-                        val (index, offset) = positions[listingKey] ?: (0 to 0)
-                        if (laidOut.view.grid) gridState.scrollToItem(index, offset)
-                        else listState.scrollToItem(index, offset)
                     }
                 }
                 Box(Modifier.onGloballyPositioned { area = it.boundsInRoot() }) {

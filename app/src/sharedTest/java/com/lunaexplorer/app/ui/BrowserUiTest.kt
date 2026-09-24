@@ -174,7 +174,9 @@ abstract class BrowserUiTest {
                 if (idle != null) directory.deleteRecursively()
                 graph.database.saveSession(previous ?: fallback)
                 graph.additionalRoots = emptyList()
-            } } finally { release() }
+            } } finally {
+                try { release() } finally { graph.procedures.close() }
+            }
         }
     }
 }

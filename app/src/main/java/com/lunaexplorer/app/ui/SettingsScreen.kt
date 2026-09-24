@@ -39,9 +39,11 @@ internal fun SettingsScreen(
     var editingTransfer by remember { mutableStateOf<Pair<TransferAccount, Boolean>?>(null) }
     var confirmDiscard by remember { mutableStateOf(false) }
     var viewingLog by remember { mutableStateOf(false) }
+    val procedureBack = remember { ProcedureSettingsBack() }
     val recordingLog by viewModel.debugLog.recording.collectAsState()
-    val leave = {
+    val leave: () -> Unit = {
         when {
+            page == SettingsPage.PROCEDURES && procedureBack.action != null -> procedureBack.action?.invoke()
             mediaCategories -> mediaCategories = false
             network != null -> network = null
             page != null -> page = null
@@ -121,6 +123,7 @@ internal fun SettingsScreen(
                         SettingsPage.PLAYER -> PlayerSettings(preferences, onChange)
                         SettingsPage.AUDIO -> AudioPlayerSettings(preferences, onChange)
                         SettingsPage.DELETING -> DeletingSettings(state, viewModel, onRecycleBin)
+                        SettingsPage.PROCEDURES -> ProcedureSettings(state, viewModel.procedures, actions) { procedureBack.action = it }
                         SettingsPage.TRANSFER -> SettingsTransferPage(state, viewModel, actions)
                         SettingsPage.LOGS -> DebugLogSettings(recordingLog, viewModel) { viewingLog = true }
                         SettingsPage.ABOUT -> AboutSettings { confirmReset = true }
@@ -205,6 +208,7 @@ private enum class SettingsPage(val title: String) {
     PLAYER("Video player"),
     AUDIO("Audio player"),
     DELETING("Deleting"),
+    PROCEDURES("Stored procedures"),
     TRANSFER("Export and import"),
     LOGS("Debug log"),
     ABOUT("Reset and about"),
@@ -232,7 +236,10 @@ private fun summaryOf(page: SettingsPage, state: BrowserState, recordingLog: Boo
     SettingsPage.AUDIO -> if (state.preferences.audioBackground) "Background play" else "Off"
     SettingsPage.DELETING -> if (state.recycleBin) "Deleting moves to the recycle bin"
     else "Deleting removes for good"
+    SettingsPage.PROCEDURES -> ""
     SettingsPage.TRANSFER -> "Settings to a file, and back"
     SettingsPage.LOGS -> if (recordingLog) "Recording" else "Off"
     SettingsPage.ABOUT -> "Put everything back, and what this build is"
 }
+
+private class ProcedureSettingsBack { var action: (() -> Unit)? = null }

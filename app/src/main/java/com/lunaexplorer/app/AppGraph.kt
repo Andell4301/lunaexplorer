@@ -1,7 +1,9 @@
 package com.lunaexplorer.app
 
 import android.app.Application
+import android.os.Build
 import com.lunaexplorer.app.data.LunaDatabase
+import com.lunaexplorer.app.data.ProcedureStore
 import com.lunaexplorer.app.debug.DebugLog
 import com.lunaexplorer.app.storage.ApkInstaller
 import com.lunaexplorer.app.storage.AppInventory
@@ -45,6 +47,7 @@ import com.lunaexplorer.app.storage.transfer.TransferStorageProvider
 import com.lunaexplorer.app.storage.transfer.TransferProtocol
 import com.lunaexplorer.app.storage.storageUri
 import com.lunaexplorer.app.work.OperationQueue
+import com.lunaexplorer.app.work.ProcedureScheduler
 import com.lunaexplorer.core.ArchiveEngine
 import com.lunaexplorer.core.ArchiveProvider
 import com.lunaexplorer.core.DigestEngine
@@ -60,6 +63,11 @@ import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 class AppGraph(
     private val application: Application,
@@ -115,6 +123,8 @@ class AppGraph(
     /** Whether Android closes [ref] to file managers (Android/data and Android/obb since Android 11). */
     fun closedToApps(ref: NodeRef): Boolean = assistedLocal.closes(ref)
     val database = LunaDatabase(application)
+    val procedures = ProcedureStore(application)
+    val procedureScheduler = ProcedureScheduler(application, procedures)
     val queue = OperationQueue(application, database)
     val archives = ArchiveEngine(providers, stagingDirectory = archiveStaging)
     val engine = OperationEngine(providers, archives = archives)
@@ -154,4 +164,29 @@ class AppGraph(
     }
 
     fun hasFullAccess(): Boolean = DeviceStorage.hasFullAccess(application)
+
+    private val storageInitialization = Mutex()
+    @Volatile private var storageInitialized = false
+
+    suspend fun prepareForWork() = storageInitialization.withLock {
+        if (storageInitialized) return@withLock
+        val saved = database.loadSession()
+        withContext(Dispatchers.IO) {
+            if (saved != null) {
+                smbAccounts = saved.smbAccounts
+                b2Accounts = saved.b2Accounts
+                transferAccounts = saved.transferAccounts
+                appDataVisible = saved.preferences.showAppData
+                refreshRoots(saved.preferences.showDeviceRoot)
+                shizuku.setEnabled(saved.preferences.shizuku && Build.VERSION.SDK_INT >= 30)
+                if (!saved.vaultLocked) {
+                    try { vault.open(locked = false) }
+                    catch (error: Exception) {
+                        currentCoroutineContext().ensureActive()
+                    }
+                }
+            }
+        }
+        storageInitialized = true
+    }
 }
