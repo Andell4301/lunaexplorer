@@ -26,7 +26,9 @@ class ProcedureQueueTest {
     private lateinit var database: LunaDatabase
     private lateinit var databaseName: String
     private val source = NodeRef("test", "opaque-source")
-    private val step = ProcedureStep(OperationType.DELETE, listOf(ProcedureSource(ProcedureLocation(source))))
+    private val step = ProcedureStep(OperationType.DELETE,
+        listOf(ProcedureSource(ProcedureLocation(source, listOf("{date}")), pattern = "{time}-*.tmp")),
+        ignoreMissingSources = true)
 
     @Before fun createDatabase() {
         context = ApplicationProvider.getApplicationContext()

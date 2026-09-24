@@ -6,6 +6,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.time.LocalDateTime
 
 internal data class ProcedureExecutionResult(
     val operation: OperationResult,
@@ -34,6 +35,7 @@ internal data class ProcedureExecutionResult(
 internal class ProcedureExecution(
     private val planner: ProcedurePlanner,
     private val engine: OperationEngine,
+    private val now: () -> LocalDateTime = LocalDateTime::now,
 ) {
     suspend fun run(
         request: OperationRequest,
@@ -42,6 +44,7 @@ internal class ProcedureExecution(
         onStepFinished: suspend (Int, ProcedureStep, ProcedureStepResult) -> Unit = { _, _, _ -> },
     ): ProcedureExecutionResult = withContext(Dispatchers.IO) {
         validateProcedureSteps(request.steps)
+        val names = ProcedureNames(now())
         val outcomes = mutableListOf<ItemOutcome>()
         val steps = mutableListOf<ProcedureStepResult>()
         var stoppedAt: Int? = null
@@ -67,7 +70,7 @@ internal class ProcedureExecution(
             var failed = false
             var outputCount = 0
             try {
-                val actions = planner.plan(step) { preparation ->
+                val actions = planner.plan(step, names) { preparation ->
                     val result = engine.run(preparation.copy(id = request.id), onEvent = onEvent)
                     outcomes += result.outcomes
                     if (!result.successful) throw StepFailed()

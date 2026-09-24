@@ -10,16 +10,19 @@ import org.junit.Test
 
 class ProcedureTransferTest {
     private val unitId = "procedures.saved"
+    private val folder = ProcedureStep(OperationType.CREATE_FOLDER,
+        destination = ProcedureLocation(NodeRef("b2", "opaque destination")), name = " {datetime} {{date}} ")
     private val step = ProcedureStep(OperationType.COPY,
-        listOf(ProcedureSource(ProcedureLocation(NodeRef("local", "opaque source"), listOf(" folder ")),
-            pattern = " invoice *.pdf", recursive = true)),
-        destination = ProcedureLocation(NodeRef("b2", "opaque destination"), listOf(" invoices ")),
-        label = " File invoices ", createDestination = true, onFailure = ProcedureFailurePolicy.CONTINUE)
+        listOf(ProcedureSource(ProcedureLocation(NodeRef("local", "opaque source"), listOf(" folder {date} ")),
+            pattern = " invoice {date} *.pdf", recursive = true)),
+        destination = ProcedureLocation(NodeRef("b2", "opaque destination"), listOf(" invoices {time} ")),
+        label = " File invoices ", createDestination = true, onFailure = ProcedureFailurePolicy.CONTINUE,
+        ignoreMissingSources = true)
     private val stop = ProcedureStep(control = ProcedureControl.STOP, conditions = listOf(
         ProcedureCondition(step.id, ProcedureConditionTest.FAILED),
         ProcedureCondition(step.id, ProcedureConditionTest.NO_OUTPUT)),
         conditionMatch = ProcedureConditionMatch.ANY)
-    private val procedure = StoredProcedure(name = " File invoices ", steps = listOf(step, stop),
+    private val procedure = StoredProcedure(name = " File invoices ", steps = listOf(folder, step, stop),
         schedule = ProcedureSchedule(enabled = true, hour = 7, minute = 30), notifyOnFailure = true)
 
     @Test fun `procedures export every action and schedule but import schedules disabled`() {

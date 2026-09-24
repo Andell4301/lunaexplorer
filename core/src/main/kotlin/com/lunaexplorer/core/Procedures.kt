@@ -3,10 +3,31 @@ package com.lunaexplorer.core
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.serialization.Serializable
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+import java.util.Locale
 import java.util.UUID
 
 @Serializable
 data class ProcedureLocation(val ref: NodeRef, val children: List<String> = emptyList())
+
+private val procedurePlaceholder = Regex("\\{\\{(date|time|datetime)}}|\\{(date|time|datetime)}")
+
+fun containsProcedurePlaceholder(value: String): Boolean = procedurePlaceholder.containsMatchIn(value)
+
+fun escapeProcedurePlaceholders(value: String): String = procedurePlaceholder.replace(value) { "{${it.value}}" }
+
+class ProcedureNames(time: LocalDateTime = LocalDateTime.now()) {
+    private val values = mapOf(
+        "date" to time.format(DateTimeFormatter.ofPattern("yyyy-MM-dd", Locale.ROOT)),
+        "time" to time.format(DateTimeFormatter.ofPattern("HH-mm-ss", Locale.ROOT)),
+        "datetime" to time.format(DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss", Locale.ROOT)),
+    )
+
+    fun expand(value: String): String = procedurePlaceholder.replace(value) { match ->
+        match.groups[1]?.let { "{${it.value}}" } ?: values.getValue(match.groupValues[2])
+    }
+}
 
 enum class ProcedureEntryKind { FILES, FOLDERS, ALL }
 enum class ProcedureControl { STOP }
@@ -48,12 +69,13 @@ data class ProcedureStep(
     val conditions: List<ProcedureCondition> = emptyList(),
     val conditionMatch: ProcedureConditionMatch = ProcedureConditionMatch.ALL,
     val onFailure: ProcedureFailurePolicy = ProcedureFailurePolicy.STOP,
+    val ignoreMissingSources: Boolean = false,
 ) {
     fun validate() {
         require(id.isNotEmpty()) { "A step ID is required" }
         if (control == ProcedureControl.STOP) {
             require(sources.isEmpty() && destination == null && name == null && archive == null &&
-                !createDestination && !keepVersions) { "Stop does not accept file options" }
+                !createDestination && !keepVersions && !ignoreMissingSources) { "Stop does not accept file options" }
             return
         }
         require(type != OperationType.PROCEDURE) { "Procedures cannot contain procedures" }
@@ -128,6 +150,7 @@ fun ProcedureStep.conditionsMet(results: List<ProcedureStepResult>): Boolean {
 class ProcedurePlanner(private val registry: ProviderRegistry) {
     suspend fun plan(
         step: ProcedureStep,
+        names: ProcedureNames = ProcedureNames(),
         createFolder: (suspend (OperationRequest) -> OperationResult)? = null,
     ): List<OperationRequest> {
         currentCoroutineContext().ensureActive()
@@ -136,7 +159,8 @@ class ProcedurePlanner(private val registry: ProviderRegistry) {
         val selected = linkedMapOf<NodeRef, Entry>()
         for (source in step.sources) {
             currentCoroutineContext().ensureActive()
-            for (entry in select(source)) selected[entry.ref] = entry
+            val expanded = source.copy(location = expand(source.location, names), pattern = source.pattern?.let(names::expand))
+            for (entry in select(expanded, step.ignoreMissingSources)) selected[entry.ref] = entry
         }
         if (step.type != OperationType.CREATE_FOLDER && selected.isEmpty()) return emptyList()
         if (step.type == OperationType.RENAME || step.type == OperationType.EXTRACT_ARCHIVE) {
@@ -147,7 +171,7 @@ class ProcedurePlanner(private val registry: ProviderRegistry) {
             withoutDescendants(selected.values.toList())
         } else selected.keys.toList()
         val destination = step.destination?.let { location ->
-            resolveDestination(location, step.createDestination, createFolder).ref
+            resolveDestination(expand(location, names), step.createDestination, createFolder).ref
         } ?: if (step.type == OperationType.RENAME) {
             registry.provider(sources.single()).parentOf(sources.single())
         } else null
@@ -155,12 +179,15 @@ class ProcedurePlanner(private val registry: ProviderRegistry) {
             type = step.type,
             sources = sources,
             destination = destination,
-            name = step.name,
+            name = step.name?.let(names::expand),
             conflictPolicy = step.conflictPolicy,
             archive = step.archive,
             keepVersions = step.keepVersions,
         ))
     }
+
+    private fun expand(location: ProcedureLocation, names: ProcedureNames): ProcedureLocation =
+        location.copy(children = location.children.map(names::expand))
 
     private suspend fun resolveDestination(
         location: ProcedureLocation,
@@ -207,8 +234,14 @@ class ProcedurePlanner(private val registry: ProviderRegistry) {
         return entry
     }
 
-    private suspend fun select(source: ProcedureSource): List<Entry> {
-        val root = resolve(source.location)
+    private suspend fun select(source: ProcedureSource, ignoreMissing: Boolean): List<Entry> {
+        val root = try {
+            resolve(source.location)
+        } catch (failure: StorageException) {
+            currentCoroutineContext().ensureActive()
+            if (ignoreMissing && failure.reason == StorageError.NOT_FOUND) return emptyList()
+            throw failure
+        }
         val pattern = source.pattern ?: return listOf(root)
         requireFolder(root)
         if (root.link) throw StorageException(StorageError.UNSUPPORTED, "Cannot match files through a folder link")

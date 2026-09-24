@@ -7,6 +7,8 @@ import com.lunaexplorer.core.NodeRef
 import com.lunaexplorer.core.ProcedureLocation
 import com.lunaexplorer.core.StorageError
 import com.lunaexplorer.core.StorageException
+import com.lunaexplorer.core.containsProcedurePlaceholder
+import com.lunaexplorer.core.escapeProcedurePlaceholders
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -74,15 +76,18 @@ class Procedures internal constructor(
     suspend fun resolve(path: String, allowMissing: Boolean = false): ProcedureLocation = withContext(Dispatchers.IO) {
         require(path.isNotEmpty()) { "Choose a location" }
         val ref = requireNotNull(resolver.refFor(path)) { "Cannot resolve this path" }
-        if (!allowMissing) return@withContext ProcedureLocation(ref)
-        existing(ref)?.let { return@withContext anchor(it) }
+        val templated = containsProcedurePlaceholder(path)
+        if (!allowMissing && !templated) return@withContext ProcedureLocation(ref)
+        if (!templated) existing(ref)?.let { return@withContext anchor(it) }
         val ancestors = ancestors(ref)
         for (separator in path.indices.reversed().filter { path[it] == '/' }) {
             ensureActive()
             val base = if (separator == 0) "/" else path.substring(0, separator)
+            if (containsProcedurePlaceholder(base)) continue
             val parent = resolver.refFor(base) ?: continue
             if (parent !in ancestors) continue
             val entry = existing(parent) ?: continue
+            require(entry.directory) { "Not a folder" }
             val anchored = anchor(entry)
             return@withContext anchored.copy(children = anchored.children + path.substring(separator + 1).split('/'))
         }
@@ -126,11 +131,14 @@ class Procedures internal constructor(
         while (true) {
             currentCoroutineContext().ensureActive()
             check(seen.add(entry.ref)) { "Folder cycle detected" }
-            require(entry.directory) { "Not a folder" }
             val parent = graph.providers.provider(entry.ref).parentOf(entry.ref)
-                ?: return ProcedureLocation(entry.ref, names.toList())
-            names.addFirst(entry.name)
+                ?: run {
+                    require(entry.directory) { "Not a folder" }
+                    return ProcedureLocation(entry.ref, names.toList())
+                }
+            names.addFirst(escapeProcedurePlaceholders(entry.name))
             entry = graph.providers.provider(parent).stat(parent)
+            require(entry.directory) { "Not a folder" }
         }
     }
 

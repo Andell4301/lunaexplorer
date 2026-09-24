@@ -5,6 +5,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
+import java.time.LocalDateTime
 
 class ProcedureExecutionTest {
     private val storage = MemoryStorageProvider("device")
@@ -14,6 +15,75 @@ class ProcedureExecutionTest {
     private val destination = storage.folder(storage.root, "destination")
 
     private fun exact(ref: NodeRef) = ProcedureSource(ProcedureLocation(ref))
+
+    @Test fun `optional absent sources leave present folders movable and later steps runnable`() = runBlocking {
+        val first = storage.folder(source, "first")
+        val third = storage.folder(source, "third")
+        storage.file(first, "one.txt", "one")
+        storage.file(third, "three.txt", "three")
+        val move = ProcedureStep(OperationType.MOVE,
+            listOf("first", "second", "third").map { ProcedureSource(ProcedureLocation(source, listOf(it))) },
+            ProcedureLocation(destination), ignoreMissingSources = true)
+        val request = OperationRequest(type = OperationType.PROCEDURE, steps = listOf(move,
+            ProcedureStep(OperationType.CREATE_FOLDER, destination = ProcedureLocation(destination), name = "done")))
+
+        val result = execution.run(request, onStep = { _, _ -> }, onEvent = {})
+
+        assertTrue(result.successful)
+        assertEquals(listOf(ProcedureStepStatus.SUCCEEDED, ProcedureStepStatus.SUCCEEDED), result.steps.map { it.status })
+        assertEquals("one", storage.text(storage.childRef(storage.childRef(destination, "first")!!, "one.txt")!!))
+        assertEquals("three", storage.text(storage.childRef(storage.childRef(destination, "third")!!, "three.txt")!!))
+        assertNull(storage.childRef(source, "first"))
+        assertNull(storage.childRef(source, "third"))
+        assertNotNull(storage.childRef(destination, "done"))
+        assertFalse(storage.hasStages())
+    }
+
+    @Test fun `entirely absent optional sources match no output without creating a destination`() = runBlocking {
+        val move = ProcedureStep(OperationType.MOVE,
+            listOf(ProcedureSource(ProcedureLocation(source, listOf("absent")), "*")),
+            ProcedureLocation(destination, listOf("unused")), createDestination = true, ignoreMissingSources = true)
+        val fallback = ProcedureStep(OperationType.CREATE_FOLDER, destination = ProcedureLocation(destination),
+            name = "empty", conditions = listOf(ProcedureCondition(move.id, ProcedureConditionTest.NO_OUTPUT)))
+
+        val result = execution.run(OperationRequest(type = OperationType.PROCEDURE, steps = listOf(move, fallback)),
+            onStep = { _, _ -> }, onEvent = {})
+
+        assertTrue(result.successful)
+        assertEquals(0, result.steps.first().outputCount)
+        assertNull(storage.childRef(destination, "unused"))
+        assertNotNull(storage.childRef(destination, "empty"))
+    }
+
+    @Test fun `all step names use one local timestamp and a later run receives a new timestamp`() = runBlocking {
+        var time = LocalDateTime.of(2026, 9, 23, 23, 59, 59)
+        val execution = ProcedureExecution(ProcedurePlanner(registry), OperationEngine(registry)) { time }
+        storage.file(source, "first.txt", "first")
+        val request = OperationRequest(type = OperationType.PROCEDURE, steps = listOf(
+            ProcedureStep(OperationType.CREATE_FOLDER, destination = ProcedureLocation(destination), name = "{datetime}"),
+            ProcedureStep(OperationType.MOVE, listOf(ProcedureSource(ProcedureLocation(source), "*")),
+                ProcedureLocation(destination, listOf("{date}_{time}"))),
+            ProcedureStep(OperationType.RENAME,
+                listOf(ProcedureSource(ProcedureLocation(destination, listOf("{datetime}", "first.txt")))),
+                name = "moved-{date}.txt"),
+        ))
+
+        val first = execution.run(request, onStep = { _, _ -> time = LocalDateTime.of(2026, 9, 24, 0, 0, 1) },
+            onEvent = {})
+
+        assertTrue(first.successful)
+        val folder = requireNotNull(storage.childRef(destination, "2026-09-23_23-59-59"))
+        assertEquals("first", storage.text(storage.childRef(folder, "moved-2026-09-23.txt")!!))
+        assertNull(storage.childRef(destination, "2026-09-24_00-00-01"))
+        storage.file(source, "first.txt", "second")
+
+        val second = execution.run(request, onStep = { _, _ -> }, onEvent = {})
+
+        assertTrue(second.successful)
+        val next = requireNotNull(storage.childRef(destination, "2026-09-24_00-00-01"))
+        assertEquals("second", storage.text(storage.childRef(next, "moved-2026-09-24.txt")!!))
+        assertFalse(storage.hasStages())
+    }
 
     @Test fun `a conflict stops later actions and retains the existing target`() = runBlocking {
         val file = storage.file(source, "file", "new")

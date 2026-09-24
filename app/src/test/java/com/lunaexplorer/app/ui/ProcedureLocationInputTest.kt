@@ -5,6 +5,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.v2.createComposeRule
 import com.lunaexplorer.app.LunaApplication
@@ -92,6 +93,27 @@ class ProcedureLocationInputTest {
         val file = File(harness.directory, " new file.txt ")
         compose.onNodeWithText("Source 1").performTextReplacement(file.absolutePath)
         assertEquals(ProcedureLocation(requireNotNull(harness.graph.local.refFor(file.absolutePath))), save())
+    }
+
+    @Test fun `placeholder buttons replace selected text in opaque relative paths`() {
+        val storage = MemoryStorageProvider("opaque")
+        harness.graph.providers.register(storage)
+        show(ProcedureLocation(storage.root, listOf("archive", "replace.txt")))
+        compose.onNodeWithTag("procedure-place-Source 1").performTextInputSelection(TextRange(8, 15))
+        compose.onNodeWithContentDescription("Insert {datetime} into Source 1").performClick()
+        compose.onNodeWithTag("procedure-place-Source 1").assertTextEquals("archive/{datetime}.txt")
+        assertEquals(ProcedureLocation(storage.root, listOf("archive", "{datetime}.txt")), save())
+    }
+
+    @Test fun `placeholder buttons preserve full path suffixes`() {
+        val root = runBlocking { harness.graph.local.root("harness") }
+        show(ProcedureLocation(root))
+        val path = File(harness.directory, "replace.txt").absolutePath
+        compose.onNodeWithText("Source 1").performTextReplacement(path)
+        val start = path.length - "replace.txt".length
+        compose.onNodeWithTag("procedure-place-Source 1").performTextInputSelection(TextRange(start, start + 7))
+        compose.onNodeWithContentDescription("Insert {date} into Source 1").performClick()
+        assertEquals(ProcedureLocation(root, listOf("{date}.txt")), save())
     }
 
     @Test fun `late labels preserve typed suffixes and clearing a selection permits a full path`() {

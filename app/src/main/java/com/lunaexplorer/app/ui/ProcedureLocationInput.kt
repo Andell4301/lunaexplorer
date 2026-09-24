@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.lunaexplorer.core.ProcedureLocation
@@ -56,12 +58,14 @@ internal fun ProcedurePlaceField(
         }
     }
     if (!opaque) {
-        OutlinedTextField(input.text, { onChange(ProcedurePlaceInput(text = it)) }, label = { Text(label) },
+        ProcedureTemplateField(label, input.text, { onChange(ProcedurePlaceInput(text = it)) },
             trailingIcon = { ProcedureBrowseButton(label, onBrowse) },
-            singleLine = true, modifier = Modifier.fillMaxWidth().testTag("procedure-place-$label"))
+            modifier = Modifier.testTag("procedure-place-$label"))
         return
     }
     var focused by remember { mutableStateOf(false) }
+    var field by remember { mutableStateOf(TextFieldValue(input.children, TextRange(input.children.length))) }
+    val current = field.copy(text = input.children)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.extraSmall,
@@ -81,8 +85,8 @@ internal fun ProcedurePlaceField(
             Row(Modifier.padding(end = 12.dp), verticalAlignment = Alignment.CenterVertically) {
                 Text("/", modifier = Modifier.padding(end = 8.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 BasicTextField(
-                    value = input.children,
-                    onValueChange = { onChange(input.copy(children = it)) },
+                    value = current,
+                    onValueChange = { field = it; onChange(input.copy(children = it.text)) },
                     modifier = Modifier.weight(1f).heightIn(min = 48.dp).onFocusChanged { focused = it.isFocused }
                         .testTag("procedure-place-$label").semantics { contentDescription = label },
                     singleLine = true,
@@ -97,6 +101,41 @@ internal fun ProcedurePlaceField(
                     },
                 )
             }
+            ProcedurePlaceholderButtons(label) { token ->
+                field = current.insert(token)
+                onChange(input.copy(children = field.text))
+            }
+        }
+    }
+}
+
+@Composable
+internal fun ProcedureTemplateField(
+    label: String,
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    trailingIcon: @Composable (() -> Unit)? = null,
+) {
+    var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+    val current = field.copy(text = value)
+    OutlinedTextField(current, { field = it; onValueChange(it.text) }, label = { Text(label) },
+        trailingIcon = trailingIcon, singleLine = true, modifier = modifier.fillMaxWidth())
+    ProcedurePlaceholderButtons(label) { token ->
+        field = current.insert(token)
+        onValueChange(field.text)
+    }
+}
+
+private fun TextFieldValue.insert(token: String): TextFieldValue = TextFieldValue(
+    text.replaceRange(selection.min, selection.max, token), TextRange(selection.min + token.length))
+
+@Composable
+private fun ProcedurePlaceholderButtons(label: String, onInsert: (String) -> Unit) {
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        listOf("{date}", "{time}", "{datetime}").forEach { token ->
+            TextButton(onClick = { onInsert(token) },
+                modifier = Modifier.semantics { contentDescription = "Insert $token into $label" }) { Text(token) }
         }
     }
 }

@@ -34,7 +34,8 @@ class ProcedureStoreTest {
     private lateinit var databaseName: String
     private var now = Instant.parse("2026-09-21T10:00:00Z")
     private val step = ProcedureStep(OperationType.DELETE,
-        listOf(ProcedureSource(ProcedureLocation(NodeRef("test", "opaque-ref")))))
+        listOf(ProcedureSource(ProcedureLocation(NodeRef("test", "opaque-ref"), listOf("{date}")),
+            pattern = "{time}-*.tmp")), ignoreMissingSources = true)
     private val schedule = ProcedureSchedule(enabled = true, kind = ProcedureScheduleKind.INTERVAL,
         intervalMinutes = 15)
 

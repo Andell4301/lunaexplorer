@@ -8,6 +8,7 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import org.junit.Assert.*
 import org.junit.Test
+import java.time.LocalDateTime
 
 class ProcedurePlannerTest {
     private val storage = MemoryStorageProvider("device")
@@ -121,6 +122,147 @@ class ProcedurePlannerTest {
         } catch (failure: StorageException) {
             assertEquals(StorageError.NOT_FOUND, failure.reason)
         }
+    }
+
+    @Test fun `optional missing sources keep the other folders in a move`() = runBlocking {
+        val first = storage.folder(source, "first")
+        val last = storage.folder(source, "last")
+        val missing = storage.folder(source, "missing")
+        storage.delete(missing)
+        val sources = listOf(
+            ProcedureLocation(first),
+            ProcedureLocation(missing),
+            ProcedureLocation(source, listOf("absent", "child")),
+            ProcedureLocation(last),
+        ).map { ProcedureSource(it) }
+        val step = ProcedureStep(OperationType.MOVE, sources, ProcedureLocation(destination),
+            ignoreMissingSources = true)
+
+        assertEquals(listOf(first, last), planner.plan(step).single().sources)
+    }
+
+    @Test fun `all optional sources missing skips destination creation`() = runBlocking {
+        val missing = ProcedureSource(ProcedureLocation(source, listOf("absent")), "*")
+        val step = ProcedureStep(OperationType.COPY, listOf(missing),
+            ProcedureLocation(destination, listOf("new")), createDestination = true, ignoreMissingSources = true)
+
+        assertTrue(planner.plan(step) { error("Empty selections must not create folders") }.isEmpty())
+        assertNull(storage.childRef(destination, "new"))
+    }
+
+    @Test fun `optional sources propagate lookup permission and cancellation failures`() = runBlocking {
+        for (cancelled in listOf(false, true)) {
+            registry.register(object : StorageProvider by storage {
+                override suspend fun stat(ref: NodeRef): Entry {
+                    if (cancelled) throw CancellationException("Cancelled")
+                    throw StorageException(StorageError.PERMISSION, "Denied")
+                }
+            })
+            val step = ProcedureStep(OperationType.DELETE, listOf(ProcedureSource(ProcedureLocation(source))),
+                ignoreMissingSources = true)
+            try {
+                planner.plan(step)
+                fail("A failed lookup must propagate")
+            } catch (_: CancellationException) {
+                assertTrue(cancelled)
+            } catch (failure: StorageException) {
+                assertFalse(cancelled)
+                assertEquals(StorageError.PERMISSION, failure.reason)
+            }
+        }
+    }
+
+    @Test fun `optional sources do not hide incomplete recursive listings`() = runBlocking {
+        val folder = storage.folder(source, "nested")
+        val file = storage.file(folder, "file.txt", "contents")
+        registry.register(object : StorageProvider by storage {
+            override fun list(parent: NodeRef, complete: Boolean) = if (parent == folder) flow {
+                emit(listOf(storage.stat(file)))
+                throw StorageException(StorageError.NOT_FOUND, "Folder disappeared")
+            } else storage.list(parent, complete)
+        })
+        val step = ProcedureStep(OperationType.DELETE,
+            listOf(ProcedureSource(ProcedureLocation(source), "*.txt", recursive = true)), ignoreMissingSources = true)
+
+        try {
+            planner.plan(step)
+            fail("An incomplete selection must fail")
+        } catch (failure: StorageException) {
+            assertEquals(StorageError.NOT_FOUND, failure.reason)
+        }
+    }
+
+    @Test fun `optional sources do not hide a missing destination`() = runBlocking {
+        val file = storage.file(source, "file.txt", "contents")
+        val step = ProcedureStep(OperationType.MOVE, listOf(ProcedureSource(ProcedureLocation(file))),
+            ProcedureLocation(destination, listOf("absent")), ignoreMissingSources = true)
+
+        try {
+            planner.plan(step)
+            fail("A missing destination must fail")
+        } catch (failure: StorageException) {
+            assertEquals(StorageError.NOT_FOUND, failure.reason)
+        }
+        assertTrue(storage.exists(file))
+    }
+
+    @Test fun `date placeholders select sources and create named destinations consistently across steps`() = runBlocking {
+        val names = ProcedureNames(LocalDateTime.of(2026, 9, 23, 7, 5, 9))
+        val dated = storage.folder(source, "2026-09-23")
+        val file = storage.file(dated, "report-07-05-09.txt", "contents")
+        storage.file(dated, "report-07-05-10.txt", "later")
+        val engine = OperationEngine(registry)
+        val move = ProcedureStep(OperationType.MOVE,
+            listOf(ProcedureSource(ProcedureLocation(source, listOf("{date}")), "report-{time}.txt")),
+            ProcedureLocation(destination, listOf("backup-{datetime}")), createDestination = true)
+
+        val request = planner.plan(move, names) { engine.run(it) }.single()
+        assertEquals(listOf(file), request.sources)
+        assertEquals("backup-2026-09-23_07-05-09", storage.stat(request.destination!!).name)
+        assertTrue(engine.run(request).successful)
+        val rename = ProcedureStep(OperationType.RENAME,
+            listOf(ProcedureSource(ProcedureLocation(destination,
+                listOf("backup-{datetime}", "report-{time}.txt")))), name = "saved-{date}-{time}.txt")
+        assertTrue(engine.run(planner.plan(rename, names).single()).successful)
+        assertEquals("contents", storage.text(storage.childRef(request.destination, "saved-2026-09-23-07-05-09.txt")!!))
+    }
+
+    @Test fun `escaped date placeholders and unknown tokens remain literal in generated names`() = runBlocking {
+        val names = ProcedureNames(LocalDateTime.of(2026, 9, 23, 7, 5, 9))
+        val step = ProcedureStep(OperationType.CREATE_FOLDER, destination = ProcedureLocation(destination),
+            name = " {{date}}-{{time}}-{{datetime}}-{unknown}-{{unknown}} ")
+        val request = planner.plan(step, names).single()
+
+        assertEquals(" {date}-{time}-{datetime}-{unknown}-{{unknown}} ", request.name)
+        assertTrue(OperationEngine(registry).run(request).successful)
+        assertNotNull(storage.childRef(destination, " {date}-{time}-{datetime}-{unknown}-{{unknown}} "))
+    }
+
+    @Test fun `escaping literal names preserves recognized tokens and any surrounding braces`() = runBlocking {
+        val names = ProcedureNames(LocalDateTime.of(2026, 9, 23, 7, 5, 9))
+        val engine = OperationEngine(registry)
+        for (literal in listOf("{date}", "{{date}}", "{{{date}}}", " {time}-{datetime} ", "{unknown}-{{unknown}}")) {
+            val step = ProcedureStep(OperationType.CREATE_FOLDER, destination = ProcedureLocation(destination),
+                name = escapeProcedurePlaceholders(literal))
+            val request = planner.plan(step, names).single()
+
+            assertTrue(engine.run(request).successful)
+            assertNotNull(storage.childRef(destination, literal))
+        }
+    }
+
+    @Test fun `placeholder expansion never rewrites opaque source references`() = runBlocking {
+        val file = storage.file(source, "file.txt", "contents")
+        val ref = NodeRef(storage.id, "opaque-{date}")
+        registry.register(object : StorageProvider by storage {
+            override suspend fun stat(ref: NodeRef) = if (ref.key == "opaque-{date}") {
+                storage.stat(file).copy(ref = ref)
+            } else storage.stat(ref)
+        })
+        val step = ProcedureStep(OperationType.DELETE, listOf(ProcedureSource(ProcedureLocation(ref))))
+
+        assertEquals(listOf(ref), planner.plan(step, ProcedureNames(LocalDateTime.of(2026, 9, 23, 7, 5, 9)))
+            .single().sources)
     }
 
     @Test fun `later steps resolve names created by previous steps through provider lookups`() = runBlocking {
@@ -244,10 +386,10 @@ class ProcedurePlannerTest {
             engine.run(it)
         }
 
-        assertTrue(planner.plan(empty, prepare).isEmpty())
+        assertTrue(planner.plan(empty, createFolder = prepare).isEmpty())
         val failed = empty.copy(sources = listOf(ProcedureSource(ProcedureLocation(source, listOf("missing")))))
         try {
-            planner.plan(failed, prepare)
+            planner.plan(failed, createFolder = prepare)
             fail("A missing source must fail")
         } catch (failure: StorageException) {
             assertEquals(StorageError.NOT_FOUND, failure.reason)

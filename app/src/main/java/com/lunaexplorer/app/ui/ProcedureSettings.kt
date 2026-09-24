@@ -312,6 +312,7 @@ private fun ProcedureStepEditor(
     }
     var destination by remember { mutableStateOf(original?.destination?.let(procedures::input) ?: ProcedurePlaceInput()) }
     var createDestination by remember { mutableStateOf(original?.createDestination ?: false) }
+    var ignoreMissingSources by remember { mutableStateOf(original?.ignoreMissingSources ?: false) }
     var name by remember { mutableStateOf(original?.name.orEmpty()) }
     var conflict by remember { mutableStateOf(original?.conflictPolicy ?: ConflictPolicy.ASK) }
     var keepVersions by remember { mutableStateOf(original?.keepVersions ?: false) }
@@ -405,6 +406,7 @@ private fun ProcedureStepEditor(
                 Spacer(Modifier.width(8.dp))
                 Text("Add source")
             }
+            SwitchRow("Ignore missing sources", ignoreMissingSources) { ignoreMissingSources = it }
         }
     }
     if (needsDestination) {
@@ -418,9 +420,8 @@ private fun ProcedureStepEditor(
     }
     if (needsName || type == OperationType.EXTRACT_ARCHIVE) {
         Spacer(Modifier.height(12.dp))
-        OutlinedTextField(name, { name = it }, label = {
-            Text(if (type == OperationType.EXTRACT_ARCHIVE) "Extract into folder (optional)" else "New name")
-        }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        ProcedureTemplateField(if (type == OperationType.EXTRACT_ARCHIVE) "Extract into folder (optional)" else "New name",
+            name, { name = it })
     }
     if (type == OperationType.CREATE_ARCHIVE) {
         ProcedureChoice("Format", format, ArchiveFormat.entries.filter { it.creatable }, { it.label }) { format = it }
@@ -470,9 +471,11 @@ private fun ProcedureStepEditor(
                         type = type ?: OperationType.COPY,
                         control = if (stopped) ProcedureControl.STOP else null,
                         sources = if (!needsSources) emptyList() else sources.map { source ->
-                            ProcedureSource(procedures.resolve(source.place), if (source.matching && !singleSource) source.pattern else null,
+                            ProcedureSource(procedures.resolve(source.place, allowMissing = ignoreMissingSources),
+                                if (source.matching && !singleSource) source.pattern else null,
                                 source.recursive && !singleSource, source.kind)
                         },
+                        ignoreMissingSources = needsSources && ignoreMissingSources,
                         destination = if (needsDestination) procedures.resolve(destination, createDestination) else null,
                         createDestination = needsDestination && createDestination,
                         name = if (needsName || type == OperationType.EXTRACT_ARCHIVE) name.takeIf { it.isNotEmpty() } else null,

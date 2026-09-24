@@ -104,6 +104,60 @@ class ProcedureSettingsUiTest : RobolectricBrowserUiTest() {
     }
 
     @Test
+    fun savesOptionalSourcesAndMovesIntoGeneratedFolders() {
+        awaitListing()
+        val source = File(fixture.directory, "beta.txt")
+        val content = source.readText()
+        openSettingsPage("Stored procedures")
+        click("Add procedure")
+        replace("Procedure name", "Daily move")
+        click("Add step")
+        chooseAction("Create folder")
+        replace("Destination", fixture.directory.absolutePath)
+        replace("New name", "daily-")
+        clickDescription("Insert {date} into New name")
+        click("Save step")
+        awaitText("1. Create folder")
+
+        click("Add step")
+        chooseAction("Move")
+        replace("Source 1", source.absolutePath)
+        click("Add source")
+        replace("Source 2", File(fixture.directory, "absent/folder").absolutePath)
+        click("Ignore missing sources")
+        replace("Destination", File(fixture.directory, "daily-{date}").absolutePath + "/")
+        clickDescription("Insert {time} into Destination")
+        click("Create missing folders")
+        click("Save step")
+        awaitText("2. Move")
+        click("Save procedure")
+        awaitCondition("Procedure saved", 10_000) { fixture.graph.procedures.procedures.value.size == 1 }
+        val saved = fixture.graph.procedures.procedures.value.single()
+        assertEquals("daily-{date}", saved.steps.first().name)
+        assertTrue(saved.steps.last().ignoreMissingSources)
+        assertEquals(listOf("daily-{date}", "{time}"), saved.steps.last().destination!!.children.takeLast(2))
+
+        clickDescription("Edit Daily move")
+        clickDescription("Edit step 2")
+        compose.onNodeWithContentDescription("Ignore missing sources").performScrollTo().assertIsOn()
+        compose.onNodeWithText("Source 2").performScrollTo()
+            .assertTextContains(File(fixture.directory, "absent/folder").absolutePath)
+        compose.onNodeWithText("Destination").performScrollTo()
+            .assertTextContains(File(fixture.directory, "daily-{date}/{time}").absolutePath)
+        click("Save step")
+        awaitText("2. Move")
+        click("Save procedure")
+        clickDescription("Run Daily move")
+        awaitCondition("Procedure finished", 15_000) {
+            fixture.graph.database.procedureRuns.value.any { it.procedureId == saved.id && it.status == "SUCCEEDED" }
+        }
+        val dated = fixture.directory.listFiles()!!.single { it.name.matches(Regex("daily-\\d{4}-\\d{2}-\\d{2}")) }
+        val timed = dated.listFiles()!!.single { it.name.matches(Regex("\\d{2}-\\d{2}-\\d{2}")) }
+        assertEquals(content, File(timed, "beta.txt").readText())
+        assertTrue(!source.exists())
+    }
+
+    @Test
     fun editsConditionalStopAndKeepsReferencesWhenStepsMove() {
         awaitListing()
         val root = requireNotNull(fixture.graph.local.refFor(fixture.directory.absolutePath))
