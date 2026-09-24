@@ -11,7 +11,7 @@ import java.util.UUID
 @Serializable
 data class ProcedureLocation(val ref: NodeRef, val children: List<String> = emptyList())
 
-private val procedurePlaceholder = Regex("\\{\\{(date|time|datetime)}}|\\{(date|time|datetime)}")
+private val procedurePlaceholder = Regex("\\{\\{(date|time|datetime)\\}\\}|\\{(date|time|datetime)\\}")
 
 fun containsProcedurePlaceholder(value: String): Boolean = procedurePlaceholder.containsMatchIn(value)
 

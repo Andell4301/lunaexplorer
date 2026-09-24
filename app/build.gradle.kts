@@ -26,8 +26,8 @@ android {
         applicationId = "com.lunaexplorer.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "1.3.0-dev.4"
+        versionCode = 10
+        versionName = "1.3.0-dev.5"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; aidl = true }
