@@ -13,10 +13,10 @@ import org.apache.commons.compress.archivers.sevenz.SevenZMethod
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream
+import org.apache.commons.compress.archivers.zip.ZipFile as SeekableZip
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
 import java.util.zip.GZIPInputStream
 import java.util.zip.GZIPOutputStream
-import net.lingala.zip4j.io.inputstream.ZipInputStream
 import net.lingala.zip4j.io.outputstream.ZipOutputStream
 import net.lingala.zip4j.model.ZipParameters
 import net.lingala.zip4j.model.enums.AesKeyStrength
@@ -131,7 +131,7 @@ data class ArchiveProgress(
 class ArchiveEngine(
     private val registry: ProviderRegistry,
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
-    /** Where stream-only 7z and RAR sources are staged; null uses the JVM's temporary directory. */
+    /** Where stream-only ZIP, 7z and RAR sources are staged; null uses the JVM's temporary directory. */
     private val stagingDirectory: File? = null,
 ) {
     fun create(
@@ -221,6 +221,9 @@ class ArchiveEngine(
             emit(ArchiveProgress(name, done, 0, bytes))
         }
         when (format) {
+            ArchiveFormat.ZIP -> indexedSource(source, archive, format).use { channel ->
+                extractZip(channel, password, onMember)
+            }
             ArchiveFormat.SEVEN_Z -> indexedSource(source, archive, format).use { channel ->
                 extractSevenZ(channel, item.name, password, onMember)
             }
@@ -234,17 +237,6 @@ class ArchiveEngine(
             else -> source.openRead(archive).use { raw ->
                 val buffered = raw.buffered(128 * 1024)
                 when (format) {
-                    ArchiveFormat.ZIP -> {
-                        val zip = if (password.isEmpty()) ZipInputStream(buffered)
-                        else ZipInputStream(buffered, password.toCharArray())
-                        zip.use {
-                            while (true) {
-                                currentCoroutineContext().ensureActive()
-                                val entry = try { it.nextEntry } catch (failure: Throwable) { throw zipFailure(failure) } ?: break
-                                onMember(entry.fileName, entry.isDirectory, Mapped(it, ::zipFailure))
-                            }
-                        }
-                    }
                     ArchiveFormat.TAR -> readTar(buffered, onMember)
                     ArchiveFormat.TAR_GZ -> GZIPInputStream(buffered).use { readTar(it, onMember) }
                     ArchiveFormat.TAR_XZ -> XZInputStream(buffered).use { readTar(it, onMember) }
@@ -262,7 +254,7 @@ class ArchiveEngine(
                             emit(ArchiveProgress(name, done, 1, bytes))
                         }
                     }
-                    ArchiveFormat.SEVEN_Z, ArchiveFormat.RAR -> error("handled above")
+                    ArchiveFormat.ZIP, ArchiveFormat.SEVEN_Z, ArchiveFormat.RAR -> error("handled above")
                 }
             }
         }
@@ -427,6 +419,34 @@ class ArchiveEngine(
                 channel.close()
                 staged.delete()
             }
+        }
+    }
+
+    private suspend fun extractZip(
+        channel: SeekableByteChannel,
+        password: String,
+        onMember: suspend (String, Boolean, InputStream) -> Unit,
+    ) {
+        val job = currentCoroutineContext().job
+        val watched = JobChannel(NonClosingChannel(channel), job)
+        try {
+            SeekableZip.builder().setSeekableByteChannel(watched).setCharset("CP437")
+                .setIgnoreLocalFileHeader(true).get().use { zip ->
+                val entries = zip.entriesInPhysicalOrder
+                val end = channel.size()
+                while (entries.hasMoreElements()) {
+                    job.ensureActive()
+                    val entry = entries.nextElement()
+                    val stream = ChannelSlice(watched, entry.localHeaderOffset, end).buffered(128 * 1024)
+                    // Stored members with data descriptors may have no sizes in their local headers.
+                    decryptZipMember(stream, entry, null, password).use {
+                        onMember(entry.name, entry.isDirectory, it)
+                    }
+                }
+            }
+        } catch (failure: Exception) {
+            job.ensureActive()
+            throw interruption(failure) ?: failure
         }
     }
 
