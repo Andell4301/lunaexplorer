@@ -21,7 +21,7 @@ internal class OffsetSubtitleParserFactory(private val offset: SubtitleOffset) :
     override fun create(format: Format): SubtitleParser {
         if (format.sampleMimeType != MimeTypes.TEXT_SSA) return OffsetSubtitleParser(delegate.create(format), offset.microseconds)
         val initialized = format.buildUpon().setInitializationData(format.initializationData.map(::normalizeSsaSections)).build()
-        return OffsetSubtitleParser(SsaSectionParser(delegate.create(initialized)), offset.microseconds)
+        return OffsetSubtitleParser(SsaStyledParser(delegate.create(initialized), initialized.initializationData), offset.microseconds)
     }
 }
 
@@ -36,18 +36,6 @@ internal fun normalizeSsaSections(bytes: ByteArray): ByteArray {
     if (!text.contains("[Script Info]", ignoreCase = true)) return bytes
     // This is only the parser's input; the user's file and the byte-preserving cache stay intact.
     return text.replace(Regex("(?im)^(\\[(?:Script Info|V4\\+? Styles|Events)\\])"), "\n$1").toByteArray(Charsets.UTF_8)
-}
-
-@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-private class SsaSectionParser(private val delegate: SubtitleParser) : SubtitleParser {
-    override fun getCueReplacementBehavior(): Int = delegate.cueReplacementBehavior
-    override fun reset() = delegate.reset()
-
-    override fun parse(data: ByteArray, offset: Int, length: Int, outputOptions: SubtitleParser.OutputOptions,
-        output: Consumer<CuesWithTiming>) {
-        val adjusted = normalizeSsaSections(data.copyOfRange(offset, offset + length))
-        delegate.parse(adjusted, 0, adjusted.size, outputOptions, output)
-    }
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)

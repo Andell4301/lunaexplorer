@@ -30,7 +30,8 @@ class BookmarkCodecTest {
 
     @Test fun `a bookmark's id survives a round trip`() {
         val original = listOf(Bookmark("Music", place("/storage/emulated/0/Music")),
-            Bookmark("Bin", Destination.Tool(Screen.RECYCLE_BIN)))
+            Bookmark("Bin", Destination.Tool(Screen.RECYCLE_BIN)),
+            Bookmark("Daily backup", Destination.Procedure("backup-id")))
         assertEquals(original, roundTrip(original))
     }
 

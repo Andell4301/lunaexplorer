@@ -97,6 +97,15 @@ internal fun SubtitleAppearanceControls(appearance: SubtitleAppearance, onChange
     }
     AppearanceSwitch("Bold text", appearance.bold, appearance.enabled) { onChange(appearance.copy(bold = it)) }
     AppearanceColor("Text color", appearance.textColor, appearance.enabled) { onChange(appearance.copy(textColor = it)) }
+    AppearanceSwitch("Keep emphasis", appearance.preserveEmphasis, appearance.enabled) {
+        onChange(appearance.copy(preserveEmphasis = it))
+    }
+    AppearanceSwitch("Keep relative text sizes", appearance.preserveRelativeSizes, appearance.enabled) {
+        onChange(appearance.copy(preserveRelativeSizes = it))
+    }
+    AppearanceSwitch("Keep text colors", appearance.preserveColors, appearance.enabled) {
+        onChange(appearance.copy(preserveColors = it))
+    }
     HorizontalDivider()
     AppearanceChoices("Text edge", SubtitleEdge.entries, appearance.edge, appearance.enabled, { it.label }) {
         onChange(appearance.copy(edge = it))

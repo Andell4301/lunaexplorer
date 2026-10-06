@@ -146,6 +146,7 @@ internal fun RichMediaViewer(entry: Entry, viewModel: BrowserViewModel, onDismis
     var playback by remember(entry.ref) { mutableStateOf<MediaPlayback?>(null) }
     var failure by remember(entry.ref) { mutableStateOf<String?>(null) }
     var trackDialog by remember(entry.ref) { mutableStateOf(false) }
+    var viewedSubtitle by remember(entry.ref) { mutableStateOf<MediaTrack?>(null) }
     var speedMenu by remember(entry.ref) { mutableStateOf(false) }
     var appearanceDialog by remember(entry.ref) { mutableStateOf(false) }
     var gestureDialog by remember(entry.ref) { mutableStateOf(false) }
@@ -685,6 +686,11 @@ internal fun RichMediaViewer(entry: Entry, viewModel: BrowserViewModel, onDismis
                             TrackChoice(track.label, player.subtitleTrack == track.id, track.supported) {
                                 if (!player.selectSubtitle(track.id)) trackMessage = "This subtitle track could not be selected"
                             }
+                            if (track.readableSubtitle != null) TextButton(onClick = {
+                                player.pause()
+                                trackDialog = false
+                                viewedSubtitle = track
+                            }) { Text("View text") }
                         }
                         if (player.subtitleTracks.isEmpty()) Text("No embedded subtitles were found",
                             style = MaterialTheme.typography.bodySmall)
@@ -734,6 +740,9 @@ internal fun RichMediaViewer(entry: Entry, viewModel: BrowserViewModel, onDismis
         SubtitleAppearanceDialog(subtitleAppearance,
             onChange = { viewModel.setPreferences(viewModel.state.value.preferences.copy(subtitleAppearance = it)) },
             onDismiss = { appearanceDialog = false; trackDialog = true })
+    }
+    if (player != null && !inPip) viewedSubtitle?.let { track ->
+        EmbeddedSubtitleViewer(player.source, track) { viewedSubtitle = null; trackDialog = true }
     }
 }
 

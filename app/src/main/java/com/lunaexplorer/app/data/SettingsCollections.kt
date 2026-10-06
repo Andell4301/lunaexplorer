@@ -72,7 +72,11 @@ internal fun bookmarks(id: String, label: String, list: BookmarkList) = Transfer
             TransferItem(
                 key = bookmark.id,
                 label = bookmark.title,
-                detail = path ?: (bookmark.destination as? Destination.Tool)?.screen?.title.orEmpty(),
+                detail = when (val destination = bookmark.destination) {
+                    is Destination.Place -> path.orEmpty()
+                    is Destination.Tool -> destination.screen.title
+                    is Destination.Procedure -> "Stored procedure"
+                },
                 missing = path != null && !transferPathCheck.exists(path),
             )
         }

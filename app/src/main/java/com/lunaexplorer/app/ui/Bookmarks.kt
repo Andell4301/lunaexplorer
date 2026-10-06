@@ -59,10 +59,16 @@ class Bookmarks(
         persist()
     }
 
-    /** Tool and breadcrumb-only bookmarks have no editable path; for them this is a rename. */
+    fun addProcedure(procedureId: String, title: String, list: BookmarkList = BookmarkList.SIDEBAR) {
+        state.update { state ->
+            state.withBookmarks(list, state.bookmarksIn(list).adding(Bookmark(title, Destination.Procedure(procedureId))))
+        }
+        persist()
+    }
+
     fun edit(bookmark: Bookmark, title: String, path: String, list: BookmarkList = BookmarkList.SIDEBAR) {
         val place = when (val destination = bookmark.destination) {
-            is Destination.Tool -> { rename(bookmark, title, list); return }
+            is Destination.Tool, is Destination.Procedure -> { rename(bookmark, title, list); return }
             is Destination.Place -> destination
         }
         if (place.path == null && place.location != null) { rename(bookmark, title, list); return }
@@ -83,7 +89,7 @@ class Bookmarks(
     }
 
     fun rename(bookmark: Bookmark, title: String, list: BookmarkList = BookmarkList.SIDEBAR) {
-        val name = title.trim().ifEmpty { return }
+        val name = title.ifEmpty { return }
         state.update { state ->
             state.withBookmarks(list, state.bookmarksIn(list).map {
                 if (it.id == bookmark.id) it.copy(title = name) else it

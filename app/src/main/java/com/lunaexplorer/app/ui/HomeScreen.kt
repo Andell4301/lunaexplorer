@@ -147,6 +147,6 @@ private fun HomeStorageSnapshot(state: BrowserState, viewModel: BrowserViewModel
                 )
             }
         }
-        TextButton(onClick = { viewModel.showScreen(Screen.STORAGE) }) { Text("Analyse storage") }
+        TextButton(onClick = { viewModel.showScreen(Screen.STORAGE) }) { Text("Analyze storage") }
     }
 }

@@ -96,6 +96,9 @@ class SubtitleAppearanceDialogTest {
         setProgress("Text size", 150f)
         clickChoice(hasText("Serif", substring = false))
         compose.onNodeWithText("Bold text").performScrollTo().performClick()
+        compose.onNodeWithText("Keep emphasis").performScrollTo().performClick()
+        compose.onNodeWithText("Keep relative text sizes").performScrollTo().performClick()
+        compose.onNodeWithText("Keep text colors").performScrollTo().performClick()
         clickChoice(hasContentDescription("Text color: Yellow"))
         clickChoice(hasText("Outline", substring = false))
         setProgress("Background opacity", 0f)
@@ -103,6 +106,7 @@ class SubtitleAppearanceDialogTest {
         setProgress("Vertical margin", 12f)
         val expected = SubtitleAppearance(enabled = true, textSizePercent = 150,
             font = SubtitleFont.SERIF, bold = true, textColor = 0xFFFFFF00.toInt(),
+            preserveEmphasis = false, preserveRelativeSizes = false, preserveColors = false,
             edge = SubtitleEdge.OUTLINE, backgroundOpacityPercent = 0,
             position = SubtitlePosition.TOP, verticalMarginPercent = 12)
         compose.runOnIdle { assertEquals(expected, harness.state.preferences.subtitleAppearance) }

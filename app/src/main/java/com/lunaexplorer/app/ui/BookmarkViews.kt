@@ -31,7 +31,9 @@ internal fun BookmarkRow(
     val unresolved = (bookmark.destination as? Destination.Place)?.takeIf { it.location == null }?.path
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.weight(1f)) {
-            LocationRow(bookmark.title, Icons.Outlined.BookmarkBorder, Hue.ACCENT,
+            LocationRow(bookmark.title,
+                if (bookmark.destination is Destination.Procedure) Icons.Outlined.PlayArrow else Icons.Outlined.BookmarkBorder,
+                Hue.ACCENT,
                 selected = selected,
                 onClick = { viewModel.openBookmark(bookmark); onOpen() },
                 detail = unresolved?.let { path ->

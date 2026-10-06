@@ -28,10 +28,11 @@ internal class ProcedureScreenBack {
 internal fun ProcedureScreen(
     state: BrowserState,
     procedures: Procedures,
+    bookmarks: Bookmarks,
     actions: LunaActions,
     back: ProcedureScreenBack,
 ) {
     Column(Modifier.fillMaxSize().testTag("procedure-screen").fastVerticalScroll(rememberScrollState()).padding(20.dp)) {
-        ProcedureSettings(state, procedures, actions) { back.action = it }
+        ProcedureSettings(state, procedures, bookmarks, actions) { back.action = it }
     }
 }

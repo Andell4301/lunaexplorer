@@ -38,10 +38,14 @@ class Procedures internal constructor(
         graph.procedureScheduler.synchronize()
     }
 
-    fun run(procedure: StoredProcedure) {
+    fun run(procedure: StoredProcedure) = enqueue { procedure }
+
+    fun run(id: String) = enqueue { requireNotNull(graph.procedures.get(id)) { "Stored procedure not found" } }
+
+    private fun enqueue(procedure: suspend () -> StoredProcedure) {
         scope.launch {
             try {
-                message(if (graph.queue.enqueueProcedure(procedure)) "Procedure queued" else "Procedure is already queued")
+                message(if (graph.queue.enqueueProcedure(procedure())) "Procedure queued" else "Procedure is already queued")
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (error: Exception) {
                 ensureActive()

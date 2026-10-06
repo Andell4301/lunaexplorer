@@ -558,12 +558,19 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
             val at = if (moved === current) parkedAt else parkedAt - (current.index + 1 - moved.index)
             if (at < updated.floor || at >= updated.index) endFlat(session.tabId) else session.parkedAt = at
         }
-        _state.update { it.copy(tabs = if (it.tabs.isEmpty()) listOf(updated) else it.tabs.map { tab -> if (tab.id == current.id) updated else tab },
-            activeTabId = current.id,
-            recent = (listOf(location) + it.recent.filter { old -> old.ref != location.ref }).take(30))
-            // Push the source screen even if BROWSER is already in the back stack: opening a result is a
-            // forward step.
-            .showing(Screen.BROWSER, if (entering) it.backStack + it.screen else it.backStack) }
+        _state.update {
+            val opening = if (entering && it.listingRef != location.ref) {
+                it.copy(entries = emptyList(), sections = emptyList(), selected = emptySet(),
+                    view = View.Folder(location.ref), loading = true, refreshing = false,
+                    error = null, errorReason = null, searching = false, extensions = emptySet())
+            } else it
+            opening.copy(tabs = if (it.tabs.isEmpty()) listOf(updated) else it.tabs.map { tab -> if (tab.id == current.id) updated else tab },
+                activeTabId = current.id,
+                recent = (listOf(location) + it.recent.filter { old -> old.ref != location.ref }).take(30))
+                // Push the source screen even if BROWSER is already in the back stack: opening a result is a
+                // forward step.
+                .showing(Screen.BROWSER, if (entering) it.backStack + it.screen else it.backStack)
+        }
         loadDirectory(); persist()
     }
 
@@ -624,6 +631,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     fun openBookmark(bookmark: Bookmark) {
         val place = when (val destination = bookmark.destination) {
             is Destination.Tool -> { showScreen(destination.screen); return }
+            is Destination.Procedure -> { procedures.run(destination.procedureId); return }
             is Destination.Place -> destination
         }
         viewModelScope.launch {

@@ -62,7 +62,7 @@ fun StorageScreen(
     }
 
     LaunchedEffect(Unit) {
-        viewModel.tools.analyse { part ->
+        viewModel.tools.analyze { part ->
             when (part) {
                 is StorageAnalysisPart.Categories -> categories = part.totals
                 is StorageAnalysisPart.Older -> older = part.entries

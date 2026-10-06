@@ -20,7 +20,9 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import com.lunaexplorer.app.model.BookmarkList
 import com.lunaexplorer.app.model.BrowserState
+import com.lunaexplorer.app.model.Destination
 import com.lunaexplorer.app.model.ProcedureSchedule
 import com.lunaexplorer.app.model.ProcedureScheduleKind
 import com.lunaexplorer.app.model.StoredProcedure
@@ -35,6 +37,7 @@ import java.time.format.TextStyle
 internal fun ProcedureSettings(
     state: BrowserState,
     procedures: Procedures,
+    bookmarks: Bookmarks,
     actions: LunaActions,
     onBackChanged: ((() -> Unit)?) -> Unit,
 ) {
@@ -72,6 +75,7 @@ internal fun ProcedureSettings(
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(procedure.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    ProcedureBookmarkMenu(procedure, state, bookmarks)
                     ToolIcon(Icons.Outlined.DeleteOutline, "Remove ${procedure.name}", onClick = { deleting = procedure })
                 }
                 Text(procedure.steps.mapIndexed { index, step -> "${index + 1}. ${stepTitle(step)}" }.joinToString(" → "),
@@ -133,6 +137,32 @@ internal fun ProcedureSettings(
         )
     }
     Spacer(Modifier.height(24.dp))
+}
+
+@Composable
+private fun ProcedureBookmarkMenu(procedure: StoredProcedure, state: BrowserState, bookmarks: Bookmarks) {
+    var expanded by remember { mutableStateOf(false) }
+    val destination = Destination.Procedure(procedure.id)
+    Box {
+        ToolIcon(Icons.Outlined.BookmarkBorder, "Bookmark ${procedure.name}", onClick = { expanded = true })
+        FastDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            BookmarkList.entries.forEach { list ->
+                val saved = if (list == BookmarkList.HOME) state.homeBookmarks else state.bookmarks
+                val matching = saved.filter { it.destination.sameAs(destination) }
+                DropdownMenuItem(
+                    text = { Text(list.label) },
+                    leadingIcon = {
+                        Icon(if (matching.isEmpty()) Icons.Outlined.CheckBoxOutlineBlank else Icons.Outlined.CheckBox, null)
+                    },
+                    onClick = {
+                        expanded = false
+                        if (matching.isEmpty()) bookmarks.addProcedure(procedure.id, procedure.name, list)
+                        else matching.forEach { bookmarks.remove(it, list) }
+                    },
+                )
+            }
+        }
+    }
 }
 
 @Composable

@@ -22,6 +22,12 @@ sealed interface Destination {
         override fun sameAs(other: Destination): Boolean = other is Tool && other.screen == screen
     }
 
+    @Serializable
+    @SerialName("procedure")
+    data class Procedure(val procedureId: String) : Destination {
+        override fun sameAs(other: Destination): Boolean = other is Procedure && other.procedureId == procedureId
+    }
+
     /** [location] is an optional cached reference. [path] is resolved on use, so an unreachable path can still be bookmarked. */
     @Serializable
     @SerialName("place")

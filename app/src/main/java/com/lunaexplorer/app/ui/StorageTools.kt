@@ -26,7 +26,7 @@ class StorageTools(
     private val delete: (List<Entry>) -> Unit,
     private val message: (String) -> Unit,
 ) {
-    fun analyse(onPart: (StorageAnalysisPart) -> Unit) {
+    fun analyze(onPart: (StorageAnalysisPart) -> Unit) {
         scope.launch {
             val totals = runCatching { graph.media.categoryTotals() }.getOrNull()
             if (totals != null) onPart(StorageAnalysisPart.Categories(totals))

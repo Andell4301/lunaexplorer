@@ -276,7 +276,7 @@ private fun LunaScaffold(
                     Box(Modifier.padding(padding).fillMaxSize()) {
                         when (state.screen) {
                             Screen.PROCEDURES -> key(state.tab?.id) {
-                                ProcedureScreen(state, viewModel.procedures, actions, procedureBack)
+                                ProcedureScreen(state, viewModel.procedures, viewModel.bookmarks, actions, procedureBack)
                             }
                             Screen.RECYCLE_BIN -> RecycleBinScreen(viewModel)
                             Screen.APPS -> AppsScreen(viewModel)
@@ -322,6 +322,7 @@ private fun LunaScaffold(
             state.preferences.showHidden, onDismiss = dismiss) { title, destination, list ->
             when (destination) {
                 is Destination.Tool -> viewModel.bookmarks.addScreen(destination.screen, title, list)
+                is Destination.Procedure -> viewModel.bookmarks.addProcedure(destination.procedureId, title, list)
                 is Destination.Place ->
                     if (destination.path == null && destination.location != null) {
                         viewModel.bookmarks.addLocation(title, destination.location, destination.file, list)

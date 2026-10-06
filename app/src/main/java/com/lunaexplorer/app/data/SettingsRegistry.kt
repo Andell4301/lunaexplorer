@@ -80,6 +80,12 @@ object SettingsRegistry {
             { it.subtitleAppearance.font }, { p, v -> p.subtitles { it.copy(font = v) } }))
         add(flag("subtitles.bold", "Subtitles", "Bold",
             { it.subtitleAppearance.bold }, { p, v -> p.subtitles { it.copy(bold = v) } }))
+        add(flag("subtitles.preserveEmphasis", "Subtitles", "Keep emphasis",
+            { it.subtitleAppearance.preserveEmphasis }, { p, v -> p.subtitles { it.copy(preserveEmphasis = v) } }))
+        add(flag("subtitles.preserveRelativeSizes", "Subtitles", "Keep relative text sizes",
+            { it.subtitleAppearance.preserveRelativeSizes }, { p, v -> p.subtitles { it.copy(preserveRelativeSizes = v) } }))
+        add(flag("subtitles.preserveColors", "Subtitles", "Keep text colors",
+            { it.subtitleAppearance.preserveColors }, { p, v -> p.subtitles { it.copy(preserveColors = v) } }))
         add(int("subtitles.textColor", "Subtitles", "Text colour", Int.MIN_VALUE..Int.MAX_VALUE,
             { it.subtitleAppearance.textColor }, { p, v -> p.subtitles { it.copy(textColor = v) } }))
         add(int("subtitles.backgroundColor", "Subtitles", "Background colour", Int.MIN_VALUE..Int.MAX_VALUE,

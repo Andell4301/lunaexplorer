@@ -146,6 +146,13 @@ class BrowserSettingsUiTest : RobolectricBrowserUiTest() {
         compose.waitUntil(10_000) { compose.waitForIdle(); appearance().enabled }
         compose.onNodeWithText("Bold text").performScrollTo().performClick()
         compose.waitUntil(10_000) { compose.waitForIdle(); appearance().bold }
+        compose.onNodeWithText("Keep emphasis").performScrollTo().performClick()
+        compose.onNodeWithText("Keep relative text sizes").performScrollTo().performClick()
+        compose.onNodeWithText("Keep text colors").performScrollTo().performClick()
+        compose.waitUntil(10_000) {
+            compose.waitForIdle()
+            !appearance().preserveEmphasis && !appearance().preserveRelativeSizes && !appearance().preserveColors
+        }
 
         compose.onNodeWithText("Reset appearance").performScrollTo().performClick()
         compose.waitUntil(10_000) { compose.waitForIdle(); appearance() == SubtitleAppearance() }

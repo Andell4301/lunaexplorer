@@ -68,6 +68,8 @@ internal fun TextEditorScreen(
     onDismiss: () -> Unit,
     onScheme: (SyntaxScheme) -> Unit,
     viewModel: BrowserViewModel? = null,
+    copySubject: String = "manifest",
+    controls: @Composable ColumnScope.() -> Unit = {},
 ) {
     val file = session.file
     val text = session.text
@@ -119,12 +121,12 @@ internal fun TextEditorScreen(
                         TextButton(onClick = {
                             scope.launch {
                                 copyStatus = try {
-                                    // Large clips exceed the Binder transaction limit; refuse rather than copy partial XML.
-                                    require(document.text.length <= 200_000) { "This manifest is too large for the clipboard. Its full text is still available here." }
+                                    // Large clips exceed the Binder transaction limit.
+                                    require(document.text.length <= 200_000) { "This $copySubject is too large for the clipboard. Its full text is still available here." }
                                     clipboard.setClipEntry(ClipEntry(ClipData.newPlainText("", document.text)))
-                                    "Manifest copied"
+                                    "${copySubject.replaceFirstChar { it.uppercase() }} copied"
                                 } catch (cancelled: CancellationException) { throw cancelled }
-                                catch (error: Exception) { error.message ?: "The manifest could not be copied" }
+                                catch (error: Exception) { error.message ?: "The $copySubject could not be copied" }
                             }
                         }) { Text("Copy") }
                     }
@@ -135,6 +137,7 @@ internal fun TextEditorScreen(
                         }
                     }
                 }
+                controls()
                 if (find.open) FindRow(find, anchor)
                 if (code) {
                     FlowRow {

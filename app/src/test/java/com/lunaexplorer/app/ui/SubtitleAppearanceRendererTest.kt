@@ -42,7 +42,8 @@ class SubtitleAppearanceRendererTest {
         assertSame(original, outputCues(view).single())
 
         view.appearance = SubtitleAppearance(enabled = true, textSizePercent = 150, textColor = Color.YELLOW,
-            font = SubtitleFont.MONOSPACE, bold = true, backgroundOpacityPercent = 50, edge = SubtitleEdge.OUTLINE)
+            font = SubtitleFont.MONOSPACE, bold = true, backgroundOpacityPercent = 50, edge = SubtitleEdge.OUTLINE,
+            preserveEmphasis = false, preserveRelativeSizes = false, preserveColors = false)
         val rendered = outputCues(view).single()
         assertEquals(original.line, rendered.line)
         assertEquals(original.position, rendered.position)
@@ -138,7 +139,7 @@ class SubtitleAppearanceRendererTest {
         val view = LunaSubtitleView(RuntimeEnvironment.getApplication())
         view.setCues(listOf(authoredCue("Caption")))
         view.appearance = SubtitleAppearance(enabled = true, edge = SubtitleEdge.OUTLINE,
-            outlineThicknessPercent = 250)
+            outlineThicknessPercent = 250, preserveEmphasis = false, preserveRelativeSizes = false, preserveColors = false)
 
         val rendered = outputCues(view).single().text as Spanned
         val widths = rendered.getSpans(0, rendered.length, CharacterStyle::class.java)
@@ -158,13 +159,14 @@ class SubtitleAppearanceRendererTest {
         val view = LunaSubtitleView(RuntimeEnvironment.getApplication())
         view.setCues(listOf(authoredCue("Caption")))
 
-        view.appearance = SubtitleAppearance(enabled = true, edge = SubtitleEdge.OUTLINE)
+        view.appearance = SubtitleAppearance(enabled = true, edge = SubtitleEdge.OUTLINE,
+            preserveEmphasis = false, preserveRelativeSizes = false, preserveColors = false)
         val untouched = outputCues(view).single().text as Spanned
         assertTrue("At the player's own width there is nothing to ask for",
             untouched.getSpans(0, untouched.length, CharacterStyle::class.java).isEmpty())
 
         view.appearance = SubtitleAppearance(enabled = true, edge = SubtitleEdge.SHADOW,
-            outlineThicknessPercent = 250)
+            outlineThicknessPercent = 250, preserveEmphasis = false, preserveRelativeSizes = false, preserveColors = false)
         val shadowed = outputCues(view).single().text as Spanned
         assertTrue("A shadow is spread, not stroked",
             shadowed.getSpans(0, shadowed.length, CharacterStyle::class.java).isEmpty())
@@ -180,6 +182,18 @@ class SubtitleAppearanceRendererTest {
         view.setCues(listOf(picture))
 
         assertSame(bitmap, outputCues(view).single().bitmap)
+    }
+
+    @Test fun `kept emphasis and colors survive custom outline rendering`() {
+        val view = LunaSubtitleView(RuntimeEnvironment.getApplication())
+        view.setCues(listOf(authoredCue("Caption")))
+        view.appearance = SubtitleAppearance(enabled = true, edge = SubtitleEdge.OUTLINE, outlineThicknessPercent = 250)
+        val rendered = outputCues(view).single().text as Spanned
+        assertEquals(Typeface.ITALIC, rendered.getSpans(0, rendered.length, StyleSpan::class.java).single().style)
+        assertEquals(Color.RED, rendered.getSpans(0, rendered.length, ForegroundColorSpan::class.java).single().foregroundColor)
+        val outline = TextPaint().apply { style = Paint.Style.FILL_AND_STROKE; strokeWidth = 4f }
+        rendered.getSpans(0, rendered.length, CharacterStyle::class.java).forEach { it.updateDrawState(outline) }
+        assertEquals(10f, outline.strokeWidth, .001f)
     }
 
     @Test fun `captions that would land on the same spot are stacked, not piled up`() {

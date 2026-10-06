@@ -38,7 +38,8 @@ import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.roundToInt
 
-internal data class MediaTrack(val id: Int, val label: String, val supported: Boolean = true)
+internal data class MediaTrack(val id: Int, val label: String, val supported: Boolean = true,
+    val readableSubtitle: MediaTrackIdentity? = null)
 
 /** Where a viewer torn down by an Activity recreation left off, for the one that replaces it. */
 internal data class PlaybackResume(val ref: NodeRef, val position: Long, val playing: Boolean)
@@ -46,7 +47,7 @@ internal data class PlaybackResume(val ref: NodeRef, val position: Long, val pla
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 internal class MediaPlayback(
     context: Context,
-    source: PlaybackSource,
+    val source: PlaybackSource,
     val subtitleDirectory: File,
     private val title: String = "",
 ) {
@@ -55,7 +56,8 @@ internal class MediaPlayback(
     private val subtitleOffset = SubtitleOffset()
     private val handler = Handler(Looper.getMainLooper())
     private val player = ExoPlayer.Builder(context.applicationContext)
-        .setMediaSourceFactory(DefaultMediaSourceFactory(source.dataSources)
+        .setMediaSourceFactory(DefaultMediaSourceFactory(source.dataSources,
+            lunaExtractorsFactory(OffsetSubtitleParserFactory(subtitleOffset)))
             .setSubtitleParserFactory(OffsetSubtitleParserFactory(subtitleOffset)))
         .setAudioAttributes(AudioAttributes.DEFAULT, true)
         .setHandleAudioBecomingNoisy(true)
@@ -421,7 +423,9 @@ internal class MediaPlayback(
                 val format = group.getTrackFormat(index)
                 val supported = group.isTrackSupported(index)
                 val label = trackNames.getTrackName(format).ifBlank { "Track ${index + 1}" }
-                val track = MediaTrack(id, if (supported) label else "$label · Unsupported on this device", supported)
+                val readable = if (group.type == C.TRACK_TYPE_TEXT && readableSubtitleFormat(format) &&
+                    externalSubtitles.none { it.id == unmergedMediaTrackId(format.id) }) mediaTrackIdentity(format) else null
+                val track = MediaTrack(id, if (supported) label else "$label · Unsupported on this device", supported, readable)
                 trackOverrides[id] = TrackSelectionOverride(group.mediaTrackGroup, index)
                 trackIdentities[id] = mediaTrackIdentity(format)
                 if (group.type == C.TRACK_TYPE_AUDIO) {

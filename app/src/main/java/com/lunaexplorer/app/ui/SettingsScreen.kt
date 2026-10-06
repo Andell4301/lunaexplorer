@@ -123,7 +123,9 @@ internal fun SettingsScreen(
                         SettingsPage.PLAYER -> PlayerSettings(preferences, onChange)
                         SettingsPage.AUDIO -> AudioPlayerSettings(preferences, onChange)
                         SettingsPage.DELETING -> DeletingSettings(state, viewModel, onRecycleBin)
-                        SettingsPage.PROCEDURES -> ProcedureSettings(state, viewModel.procedures, actions) { procedureBack.action = it }
+                        SettingsPage.PROCEDURES -> ProcedureSettings(state, viewModel.procedures, viewModel.bookmarks, actions) {
+                            procedureBack.action = it
+                        }
                         SettingsPage.TRANSFER -> SettingsTransferPage(state, viewModel, actions)
                         SettingsPage.LOGS -> DebugLogSettings(recordingLog, viewModel) { viewingLog = true }
                         SettingsPage.ABOUT -> AboutSettings { confirmReset = true }

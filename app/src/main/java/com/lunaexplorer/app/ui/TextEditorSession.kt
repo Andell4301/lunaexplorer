@@ -147,14 +147,16 @@ internal class TextEditorSession private constructor(
             write = files::writeText,
         )
 
-        fun forText(key: Any, title: String, scope: CoroutineScope, unreadable: String, load: suspend () -> String) = TextEditorSession(
-            key, title, null, code = true, CodeLanguage.XML, scope, unreadable,
+        fun forText(key: Any, title: String, scope: CoroutineScope, unreadable: String,
+            language: CodeLanguage = CodeLanguage.XML, load: suspend () -> String) = TextEditorSession(
+            key, title, null, code = language != CodeLanguage.PLAIN_TEXT, language, scope, unreadable,
             load = {
                 try {
                     Result.success(EditorContent(load(), writable = false, derived = true))
                 } catch (cancelled: CancellationException) {
                     throw cancelled
                 } catch (error: Exception) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
                     Result.failure(error)
                 }
             },

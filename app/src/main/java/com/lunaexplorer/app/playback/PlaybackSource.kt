@@ -6,16 +6,23 @@ import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DefaultDataSource
 import com.lunaexplorer.core.Entry
 import com.lunaexplorer.core.ProviderRegistry
+import java.nio.channels.SeekableByteChannel
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-internal class PlaybackSource(val uri: Uri, val dataSources: DataSource.Factory) {
+internal class PlaybackSource(
+    val uri: Uri,
+    val dataSources: DataSource.Factory,
+    val openChannel: (suspend () -> SeekableByteChannel?)? = null,
+) {
     companion object {
         fun create(context: Context, providers: ProviderRegistry, entry: Entry): PlaybackSource {
             val provider = providers.provider(entry.ref)
             // A content URI would route back through Luna's own kernel proxy descriptor.
             val uri = Uri.Builder().scheme("luna-media").authority("playback").appendPath(entry.name).build()
             val storage = DataSource.Factory { StorageDataSource(provider, entry.ref) }
-            return PlaybackSource(uri, DefaultDataSource.Factory(context.applicationContext, storage))
+            return PlaybackSource(uri, DefaultDataSource.Factory(context.applicationContext, storage)) {
+                provider.openChannel(entry.ref)
+            }
         }
     }
 }

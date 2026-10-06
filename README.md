@@ -20,10 +20,10 @@ I'm primarily a Python and Rust developer. I'm very new to Kotlin. I'm learning,
 - **Storage:** internal storage, removable drives, folders granted through Android's file picker, SMB 2/3 shares, FTP/FTPS and SFTP servers, and Backblaze B2 buckets.
 - **Navigation:** tabs, bookmarks, breadcrumbs, search by name, size, date and the text inside files, list and grid layouts, and folder-specific sorting.
 - **File operations:** queued copy and move, batch rename, drag and drop, conflict resolution, a recycle bin, and operation reports.
-- **Stored procedures:** saved sequences of file operations, multiple sources, filename patterns, conditional steps, schedules, run history, and optional result notifications.
+- **Stored procedures:** saved sequences of file operations, Home and Sidebar bookmarks for quick runs, multiple sources, filename patterns, conditional steps, schedules, run history, and optional result notifications.
 - **Archives:** browse and extract archives; create ZIP, TAR, GZIP and XZ archives, including encrypted ZIP files.
 - **Viewers and editors:** images, PDF, EPUB, DOCX/PPTX previews, text and code editing with find and syntax highlighting, and a searchable hex viewer. Viewers can be offered to other apps through "Open with Luna".
-- **Media:** audio and video playback, configurable video exit behavior, picture in picture, background play, track selection, external subtitles, playback speed, and subtitle appearance controls.
+- **Media:** audio and video playback, configurable video exit behavior, picture in picture, background play, track selection, external subtitles, embedded text subtitle viewing, playback speed, and subtitle appearance controls.
 - **Tools:** storage analysis, duplicate detection, installed-app inspection, APK extraction, package installation, checksums and file metadata.
 - **Appearance:** light and dark themes, accent colors, colorful icons, adjustable sizing, and a tablet sidebar.
 
