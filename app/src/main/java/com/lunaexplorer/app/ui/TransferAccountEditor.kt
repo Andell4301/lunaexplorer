@@ -41,6 +41,7 @@ internal fun TransferAccountEditor(
     isNew: Boolean,
     viewModel: BrowserViewModel,
     actions: LunaActions,
+    terminal: Boolean = false,
     onDismiss: () -> Unit,
 ) {
     val sftp = account.protocol == TransferProtocol.SFTP
@@ -103,7 +104,7 @@ internal fun TransferAccountEditor(
             testing = true; result = null; offeredKey = null; connected = false
             scope.launch {
                 try {
-                    viewModel.servers.test(candidate, credentials()).fold(
+                    viewModel.servers.test(candidate, credentials(), terminal).fold(
                         onSuccess = { connected = true; result = "Connected" },
                         onFailure = {
                             if (it is HostKeyRequired) {
@@ -148,7 +149,7 @@ internal fun TransferAccountEditor(
             Column(Modifier.fillMaxSize().statusBarsPadding()) {
                 Row(Modifier.fillMaxWidth().height(56.dp).padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     ToolIcon(Icons.AutoMirrored.Outlined.ArrowBack, "Back", onClick = onDismiss)
-                    Text(if (isNew) "Add an ${if (sftp) "SFTP" else "FTP"} server" else account.name.ifEmpty { account.host },
+                    Text(if (isNew) "Add an ${if (terminal) "SSH" else if (sftp) "SFTP" else "FTP"} server" else account.name.ifEmpty { account.host },
                         Modifier.padding(start = 8.dp), style = MaterialTheme.typography.titleLarge)
                 }
                 Column(Modifier.weight(1f).fastVerticalScroll(scroll).padding(horizontal = 20.dp),
@@ -163,7 +164,7 @@ internal fun TransferAccountEditor(
                             label = { Text("Port") }, modifier = Modifier.width(96.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
                     }
-                    OutlinedTextField(rootPath, { rootPath = it }, enabled = !busy, singleLine = true,
+                    if (!terminal) OutlinedTextField(rootPath, { rootPath = it }, enabled = !busy, singleLine = true,
                         label = { Text("Root folder") }, modifier = Modifier.fillMaxWidth())
                     if (!sftp) {
                         Text("Security", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)

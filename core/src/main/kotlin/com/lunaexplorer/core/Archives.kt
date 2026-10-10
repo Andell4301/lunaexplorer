@@ -8,7 +8,10 @@ import java.io.OutputStream
 import java.nio.channels.FileChannel
 import java.nio.channels.SeekableByteChannel
 import java.nio.file.StandardOpenOption
+import java.security.DigestOutputStream
+import java.security.MessageDigest
 import java.util.UUID
+import com.github.junrar.rarfile.HostSystem
 import org.apache.commons.compress.archivers.sevenz.SevenZMethod
 import org.apache.commons.compress.archivers.tar.TarArchiveEntry
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
@@ -31,8 +34,10 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.Serializable
@@ -139,6 +144,9 @@ class ArchiveEngine(
         parent: NodeRef,
         name: String,
         options: ArchiveOptions,
+        verify: Boolean = false,
+        onSource: (suspend (Entry, ByteArray?) -> Unit)? = null,
+        onVerification: ((suspend () -> Unit) -> Unit)? = null,
     ): Flow<ArchiveProgress> = flow {
         validateName(name)
         if (!options.format.creatable) {
@@ -153,24 +161,42 @@ class ArchiveEngine(
                 val provider = registry.provider(source)
                 plan(provider, provider.stat(source), "", plan)
             }
+            if (verify) {
+                val paths = plan.map { normalizedMemberPath(it.path) }
+                val files = plan.indices.filter { !plan[it].entry.directory }.mapTo(hashSetOf()) { paths[it] }
+                val overlaps = paths.any { path ->
+                    generateSequence(path.substringBeforeLast('/', "")) { parent ->
+                        parent.substringBeforeLast('/', "").takeIf { it.isNotEmpty() }
+                    }.any { it in files }
+                }
+                if (paths.any { it.isEmpty() } || paths.toSet().size != paths.size ||
+                    overlaps) {
+                    throw StorageException(StorageError.CONFLICT, "Archive member names collide; source retained")
+                }
+            }
             val expected = if (plan.any { !it.entry.directory && it.entry.size == null }) null
                 else plan.filter { !it.entry.directory }.sumOf { it.entry.size ?: 0L }
             emit(ArchiveProgress(entriesTotal = plan.size, bytesTotal = expected, target = staged.ref))
 
             var done = 0
             var bytes = 0L
+            if (verify && options.format in setOf(ArchiveFormat.GZIP, ArchiveFormat.XZ) &&
+                (plan.size != 1 || plan.single().entry.directory)) {
+                throw StorageException(StorageError.UNSUPPORTED, "A compressed file cannot retain source folders")
+            }
+            val digest = MessageDigest.getInstance("SHA-256")
             val onEntry: suspend (String, Long) -> Unit = { path, written ->
                 done++
                 bytes += written
                 emit(ArchiveProgress(path, done, plan.size, bytes, bytesTotal = expected))
             }
             target.openWrite(staged.ref).use { raw ->
-                val sink = BufferedOutputStream(raw, 128 * 1024)
+                val sink = BufferedOutputStream(if (verify) DigestOutputStream(raw, digest) else raw, 128 * 1024)
                 when (options.format) {
-                    ArchiveFormat.ZIP -> writeZip(plan, sink, options, onEntry)
-                    ArchiveFormat.TAR -> writeTar(plan, sink, onEntry)
-                    ArchiveFormat.TAR_GZ -> GZIPOutputStream(sink).use { writeTar(plan, it, onEntry) }
-                    ArchiveFormat.TAR_XZ -> XZOutputStream(sink, xzOptions(options.level)).use { writeTar(plan, it, onEntry) }
+                    ArchiveFormat.ZIP -> writeZip(plan, sink, options, onEntry, onSource)
+                    ArchiveFormat.TAR -> writeTar(plan, sink, onEntry, onSource)
+                    ArchiveFormat.TAR_GZ -> GZIPOutputStream(sink).use { writeTar(plan, it, onEntry, onSource) }
+                    ArchiveFormat.TAR_XZ -> XZOutputStream(sink, xzOptions(options.level)).use { writeTar(plan, it, onEntry, onSource) }
                     ArchiveFormat.GZIP, ArchiveFormat.XZ -> {
                         val single = plan.singleOrNull { !it.entry.directory }
                             ?: throw StorageException(StorageError.UNSUPPORTED,
@@ -180,7 +206,12 @@ class ArchiveEngine(
                         } else {
                             GZIPOutputStream(sink)
                         }
-                        val written = wrapped.use { copy(registry.provider(single.entry.ref), single.entry.ref, it) }
+                        val sourceDigest = onSource?.let { MessageDigest.getInstance("SHA-256") }
+                        val written = wrapped.use {
+                            copy(registry.provider(single.entry.ref), single.entry.ref,
+                                if (sourceDigest != null) DigestOutputStream(it, sourceDigest) else it)
+                        }
+                        onSource?.invoke(single.entry, sourceDigest?.digest())
                         onEntry(single.entry.name, written)
                     }
                     ArchiveFormat.TAR_BZ2, ArchiveFormat.BZIP2, ArchiveFormat.SEVEN_Z, ArchiveFormat.RAR ->
@@ -188,7 +219,13 @@ class ArchiveEngine(
                 }
                 sink.flush()
             }
+            val expectedArchiveDigest = if (verify) digest.digest() else null
+            if (expectedArchiveDigest != null) verifyBytes(target, staged.ref, expectedArchiveDigest)
             published = target.commit(staged.ref, parent, name)
+            if (expectedArchiveDigest != null) {
+                val ref = published.ref
+                onVerification?.invoke { verifyBytes(target, ref, expectedArchiveDigest) }
+            }
             emit(ArchiveProgress(name, done, plan.size, bytes, complete = true, produced = published.ref,
                 bytesTotal = expected))
         } finally {
@@ -203,62 +240,87 @@ class ArchiveEngine(
         parent: NodeRef,
         into: String?,
         password: String = "",
+        verify: Boolean = false,
+        onVerification: ((suspend () -> Unit) -> Unit)? = null,
+        sourceDigest: ByteArray? = null,
+        keepBoth: Boolean = false,
     ): Flow<ArchiveProgress> = flow {
         val source = registry.provider(archive)
         val item = source.stat(archive)
-        val target = registry.provider(parent)
-        val destination = if (into == null) parent else {
-            validateName(into)
-            target.create(parent, into, directory = true).ref
-        }
-        emit(ArchiveProgress(target = destination))
-        val format = formatOf(item.name)
-        var done = 0
-        var bytes = 0L
-        val onMember: suspend (String, Boolean, InputStream) -> Unit = { name, directory, stream ->
-            bytes += unpack(target, destination, name, directory, stream)
-            done++
-            emit(ArchiveProgress(name, done, 0, bytes))
-        }
-        when (format) {
-            ArchiveFormat.ZIP -> indexedSource(source, archive, format).use { channel ->
-                extractZip(channel, password, onMember)
+        val verifiedSource = sourceDigest?.let { stageVerifiedSource(source, archive, it) }
+        try {
+            val target = registry.provider(parent)
+            val destination = if (into == null) parent else {
+                validateName(into)
+                val name = if (keepBoth) extractionName(target, parent, into, directory = true) else into
+                target.create(parent, name, directory = true).ref
             }
-            ArchiveFormat.SEVEN_Z -> indexedSource(source, archive, format).use { channel ->
-                extractSevenZ(channel, item.name, password, onMember)
+            emit(ArchiveProgress(target = destination))
+            val format = formatOf(item.name)
+            var done = 0
+            var bytes = 0L
+            val verification = if (verify) ExtractionVerification() else null
+            val names = ExtractionNames(archive, keepBoth)
+            val onMember: suspend (String, Boolean, InputStream) -> Unit = { name, directory, stream ->
+                bytes += unpack(target, destination, name, directory, stream, verification, names)
+                done++
+                emit(ArchiveProgress(name, done, 0, bytes))
             }
-            ArchiveFormat.RAR -> indexedSource(source, archive, format).use { channel ->
-                extractRar(channel, password, target, destination) { name, written ->
-                    bytes += written
-                    done++
-                    emit(ArchiveProgress(name, done, 0, bytes))
+            when (format) {
+                ArchiveFormat.ZIP -> (verifiedSource?.let { FileChannel.open(it.toPath(), StandardOpenOption.READ) }
+                    ?: indexedSource(source, archive, format)).use { channel ->
+                    extractZip(channel, password, verify, onMember)
                 }
-            }
-            else -> source.openRead(archive).use { raw ->
-                val buffered = raw.buffered(128 * 1024)
-                when (format) {
-                    ArchiveFormat.TAR -> readTar(buffered, onMember)
-                    ArchiveFormat.TAR_GZ -> GZIPInputStream(buffered).use { readTar(it, onMember) }
-                    ArchiveFormat.TAR_XZ -> XZInputStream(buffered).use { readTar(it, onMember) }
-                    ArchiveFormat.TAR_BZ2 -> BZip2CompressorInputStream(buffered, true).use { readTar(it, onMember) }
-                    ArchiveFormat.GZIP, ArchiveFormat.XZ, ArchiveFormat.BZIP2 -> {
-                        val stream = when (format) {
-                            ArchiveFormat.XZ -> XZInputStream(buffered)
-                            ArchiveFormat.BZIP2 -> BZip2CompressorInputStream(buffered, true)
-                            else -> GZIPInputStream(buffered)
-                        }
-                        stream.use {
-                            val name = item.name.removeSuffix(".gz").removeSuffix(".xz").removeSuffix(".bz2").ifBlank { "extracted" }
-                            bytes += unpack(target, destination, name, false, it)
-                            done++
-                            emit(ArchiveProgress(name, done, 1, bytes))
-                        }
+                ArchiveFormat.SEVEN_Z -> (verifiedSource?.let { FileChannel.open(it.toPath(), StandardOpenOption.READ) }
+                    ?: indexedSource(source, archive, format)).use { channel ->
+                    extractSevenZ(channel, item.name, password, verify, onMember)
+                }
+                ArchiveFormat.RAR -> (verifiedSource?.let { FileChannel.open(it.toPath(), StandardOpenOption.READ) }
+                    ?: indexedSource(source, archive, format)).use { channel ->
+                    extractRar(channel, password, target, destination, verification, names) { name, written ->
+                        bytes += written
+                        done++
+                        emit(ArchiveProgress(name, done, 0, bytes))
                     }
-                    ArchiveFormat.ZIP, ArchiveFormat.SEVEN_Z, ArchiveFormat.RAR -> error("handled above")
+                }
+                else -> (verifiedSource?.inputStream() ?: source.openRead(archive)).use { raw ->
+                    val buffered = raw.buffered(128 * 1024)
+                    when (format) {
+                        ArchiveFormat.TAR -> readTar(buffered, verify, onMember)
+                        ArchiveFormat.TAR_GZ -> GZIPInputStream(buffered).use { readTar(it, verify, onMember) }
+                        ArchiveFormat.TAR_XZ -> XZInputStream(buffered).use { readTar(it, verify, onMember) }
+                        ArchiveFormat.TAR_BZ2 -> BZip2CompressorInputStream(buffered, true).use { readTar(it, verify, onMember) }
+                        ArchiveFormat.GZIP, ArchiveFormat.XZ, ArchiveFormat.BZIP2 -> {
+                            val stream = when (format) {
+                                ArchiveFormat.XZ -> XZInputStream(buffered)
+                                ArchiveFormat.BZIP2 -> BZip2CompressorInputStream(buffered, true)
+                                else -> GZIPInputStream(buffered)
+                            }
+                            stream.use {
+                                val name = item.name.removeSuffix(".gz").removeSuffix(".xz").removeSuffix(".bz2").ifBlank { "extracted" }
+                                bytes += unpack(target, destination, name, false, it, verification, names)
+                                done++
+                                emit(ArchiveProgress(name, done, 1, bytes))
+                            }
+                        }
+                        ArchiveFormat.ZIP, ArchiveFormat.SEVEN_Z, ArchiveFormat.RAR -> error("handled above")
+                    }
                 }
             }
+            if (verification != null) {
+                val verifyOutput: suspend () -> Unit = {
+                    verification.files.forEach { (ref, digest) -> verifyBytes(target, ref, digest) }
+                    verification.directories.forEach { ref ->
+                        if (!target.stat(ref).directory) throw StorageException(StorageError.IO, "Extracted folder changed; source retained")
+                    }
+                }
+                verifyOutput()
+                onVerification?.invoke(verifyOutput)
+            }
+            emit(ArchiveProgress(item.name, done, done, bytes, complete = true, produced = destination))
+        } finally {
+            verifiedSource?.delete()
         }
-        emit(ArchiveProgress(item.name, done, done, bytes, complete = true, produced = destination))
     }.flowOn(dispatcher)
 
     /** Unknown names are treated as zip. */
@@ -298,7 +360,7 @@ class ArchiveEngine(
         into += Planned(entry, path)
         if (!entry.directory) return
         val children = mutableListOf<Entry>()
-        provider.list(entry.ref).collect { children.addAll(it) }
+        provider.list(entry.ref, complete = true).collect { children.addAll(it) }
         for (child in children) plan(provider, child, path, into, depth + 1)
     }
 
@@ -307,6 +369,7 @@ class ArchiveEngine(
         sink: OutputStream,
         options: ArchiveOptions,
         onEntry: suspend (String, Long) -> Unit,
+        onSource: (suspend (Entry, ByteArray?) -> Unit)?,
     ) {
         val encrypting = options.encryption != ZipEncryption.NONE && options.password.isNotEmpty()
         // zip4j closes its output stream; the sink belongs to the caller.
@@ -333,8 +396,11 @@ class ArchiveEngine(
                 if (options.stored && !directory) entrySize = planned.entry.size ?: -1L
             }
             zip.putNextEntry(parameters)
-            val written = if (directory) 0L else copy(provider, planned.entry.ref, zip)
+            val sourceDigest = onSource?.let { MessageDigest.getInstance("SHA-256") }
+            val written = if (directory) 0L else copy(provider, planned.entry.ref,
+                if (sourceDigest != null) DigestOutputStream(zip, sourceDigest) else zip)
             zip.closeEntry()
+            onSource?.invoke(planned.entry, if (directory) null else sourceDigest?.digest())
             onEntry(planned.path, written)
         }
         zip.close()
@@ -349,6 +415,7 @@ class ArchiveEngine(
         plan: List<Planned>,
         sink: OutputStream,
         onEntry: suspend (String, Long) -> Unit,
+        onSource: (suspend (Entry, ByteArray?) -> Unit)?,
     ) {
         val tar = TarArchiveOutputStream(NonClosing(sink))
         // POSIX (pax) records carry paths longer than the ustar name field.
@@ -363,6 +430,7 @@ class ArchiveEngine(
             if (directory) {
                 tar.putArchiveEntry(record)
                 tar.closeArchiveEntry()
+                onSource?.invoke(planned.entry, null)
                 onEntry(planned.path, 0)
                 continue
             }
@@ -372,6 +440,7 @@ class ArchiveEngine(
             tar.putArchiveEntry(record)
             tar.write(bytes)
             tar.closeArchiveEntry()
+            onSource?.invoke(planned.entry, MessageDigest.getInstance("SHA-256").digest(bytes))
             onEntry(planned.path, bytes.size.toLong())
         }
         tar.finish()
@@ -380,16 +449,35 @@ class ArchiveEngine(
 
     private suspend fun readTar(
         source: InputStream,
+        verify: Boolean,
         onEntry: suspend (String, Boolean, InputStream) -> Unit,
     ) {
         TarArchiveInputStream(source).use { tar ->
             while (true) {
                 currentCoroutineContext().ensureActive()
                 val record = tar.nextEntry ?: return
+                if (verify && !record.isFile && !record.isDirectory) {
+                    throw StorageException(StorageError.UNSUPPORTED, "Archive contains an unsupported member: ${record.name}")
+                }
                 val name = record.name.trimEnd('/')
-                if (name.isEmpty()) continue
+                if (name.isEmpty()) {
+                    if (verify) throw StorageException(StorageError.UNSUPPORTED, "Archive contains an unnamed member")
+                    continue
+                }
                 onEntry(name, record.isDirectory, tar)
             }
+        }
+    }
+
+    private suspend fun stageVerifiedSource(provider: StorageProvider, ref: NodeRef, digest: ByteArray): File {
+        val staged = File.createTempFile("luna-extract", ".verified", stagingDirectory)
+        try {
+            staged.outputStream().use { output -> copy(provider, ref, output) }
+            staged.inputStream().use { input -> verifyBytes(input, digest) }
+            return staged
+        } catch (failure: Throwable) {
+            staged.delete()
+            throw failure
         }
     }
 
@@ -425,6 +513,7 @@ class ArchiveEngine(
     private suspend fun extractZip(
         channel: SeekableByteChannel,
         password: String,
+        verify: Boolean,
         onMember: suspend (String, Boolean, InputStream) -> Unit,
     ) {
         val job = currentCoroutineContext().job
@@ -437,6 +526,9 @@ class ArchiveEngine(
                 while (entries.hasMoreElements()) {
                     job.ensureActive()
                     val entry = entries.nextElement()
+                    if (verify && entry.isUnixSymlink) {
+                        throw StorageException(StorageError.UNSUPPORTED, "Archive contains a symbolic link: ${entry.name}")
+                    }
                     val stream = ChannelSlice(watched, entry.localHeaderOffset, end).buffered(128 * 1024)
                     // Stored members with data descriptors may have no sizes in their local headers.
                     decryptZipMember(stream, entry, null, password).use {
@@ -455,6 +547,7 @@ class ArchiveEngine(
         channel: SeekableByteChannel,
         name: String,
         password: String,
+        verify: Boolean,
         onMember: suspend (String, Boolean, InputStream) -> Unit,
     ) {
         val passwordGiven = password.isNotEmpty()
@@ -466,9 +559,18 @@ class ArchiveEngine(
                 } catch (failure: Throwable) {
                     throw sevenZFailure(failure, encrypted = true, passwordGiven = passwordGiven)
                 } ?: break
+                // 7z stores Unix mode bits in the upper half of its Windows attributes.
+                val special = entry.hasWindowsAttributes &&
+                    (unsupportedFileMode(entry.windowsAttributes ushr 16) || entry.windowsAttributes and 0x400 != 0)
+                if (verify && (entry.isAntiItem || entry.name.isNullOrEmpty() || special)) {
+                    throw StorageException(StorageError.UNSUPPORTED, "Archive contains an unsupported member")
+                }
                 if (entry.isAntiItem) continue
                 val memberName = normalizedMemberPath(entry.name ?: continue)
-                if (memberName.isEmpty()) continue
+                if (memberName.isEmpty()) {
+                    if (verify) throw StorageException(StorageError.UNSUPPORTED, "Archive contains an unnamed member")
+                    continue
+                }
                 val encrypted = entry.contentMethods?.any { it.method == SevenZMethod.AES256SHA256 } == true
                 val stream = Mapped(object : InputStream() {
                     override fun read(): Int = file.read()
@@ -485,6 +587,8 @@ class ArchiveEngine(
         password: String,
         target: StorageProvider,
         destination: NodeRef,
+        verification: ExtractionVerification?,
+        names: ExtractionNames,
         onMember: suspend (String, Long) -> Unit,
     ) {
         val passwordGiven = password.isNotEmpty()
@@ -492,9 +596,16 @@ class ArchiveEngine(
         openRar(channel, channel.size(), password.takeIf { it.isNotEmpty() }).use { rar ->
             for (header in rar.fileHeaders) {
                 job.ensureActive()
-                val name = normalizedMemberPath(header.fileName ?: continue)
-                if (name.isEmpty()) continue
-                val written = unpackWith(target, destination, name, header.isDirectory) { output ->
+                if (verification != null && (header.redirection != null ||
+                    (header.hostOS == HostSystem.unix && unsupportedFileMode(header.fileAttr)))) {
+                    throw StorageException(StorageError.UNSUPPORTED, "Archive contains an unsupported member")
+                }
+                val name = normalizedMemberPath(header.fileName.orEmpty())
+                if (name.isEmpty()) {
+                    if (verification != null) throw StorageException(StorageError.UNSUPPORTED, "Archive contains an unnamed member")
+                    continue
+                }
+                val written = unpackWith(target, destination, name, header.isDirectory, verification, names) { output ->
                     val checked = object : OutputStream() {
                         override fun write(b: Int) { job.ensureActive(); output.write(b) }
                         override fun write(b: ByteArray, off: Int, len: Int) { job.ensureActive(); output.write(b, off, len) }
@@ -518,7 +629,9 @@ class ArchiveEngine(
         rawName: String,
         directory: Boolean,
         stream: InputStream,
-    ): Long = unpackWith(target, destination, rawName, directory) { output ->
+        verification: ExtractionVerification?,
+        names: ExtractionNames,
+    ): Long = unpackWith(target, destination, rawName, directory, verification, names) { output ->
         val buffer = ByteArray(128 * 1024)
         while (true) {
             currentCoroutineContext().ensureActive()
@@ -534,48 +647,141 @@ class ArchiveEngine(
         destination: NodeRef,
         rawName: String,
         directory: Boolean,
+        verification: ExtractionVerification?,
+        names: ExtractionNames,
         write: suspend (OutputStream) -> Unit,
     ): Long {
         // "." and ".." segments are dropped so a member cannot escape the destination; existing
         // links are refused in extractionChild.
         val segments = rawName.split('/', '\\').filter { it.isNotEmpty() && it != "." && it != ".." }
-        if (segments.isEmpty()) return 0
+        if (segments.isEmpty()) {
+            if (verification != null) throw StorageException(StorageError.UNSUPPORTED, "Archive contains an unnamed member")
+            return 0
+        }
         var parent = destination
-        for (segment in segments.dropLast(1)) parent = folder(target, parent, segment)
+        var path = ""
+        for (segment in segments.dropLast(1)) {
+            path = if (path.isEmpty()) segment else "$path/$segment"
+            parent = folder(target, parent, segment, path, names)
+        }
         val name = segments.last()
-        if (directory) { folder(target, parent, name); return 0 }
+        val memberPath = segments.joinToString("/")
+        if (directory) {
+            val ref = folder(target, parent, name, memberPath, names)
+            verification?.directories?.add(ref)
+            return 0
+        }
         validateName(name)
-        val existing = extractionChild(target, parent, name)
-        if (existing != null) target.delete(existing.ref)
-        val created = target.create(parent, name, directory = false)
+        if (!names.keepBoth && memberPath in names.filePaths) {
+            throw StorageException(StorageError.CONFLICT, "Duplicate archive member: $rawName")
+        }
+        val existing = extractionChild(target, parent, name, requireExactName = !names.keepBoth)
+        if (!names.keepBoth && existing?.ref == names.archive) {
+            throw StorageException(StorageError.CONFLICT, "Extraction would replace the source archive")
+        }
+        if (!names.keepBoth && existing != null) {
+            if (existing.directory || existing.name != name || existing.ref in names.files) {
+                throw StorageException(StorageError.CONFLICT, "Name collision: $rawName and ${existing.name}")
+            }
+            target.delete(existing.ref)
+        }
+        val outputName = if (names.keepBoth && existing != null) extractionName(target, parent, name, directory = false) else name
+        val created = target.create(parent, outputName, directory = false)
+        names.files += created.ref
+        names.filePaths += memberPath
         var written = 0L
+        val digest = MessageDigest.getInstance("SHA-256")
         target.openWrite(created.ref).use { output ->
+            val checked = if (verification != null) DigestOutputStream(output, digest) else output
             val counting = object : OutputStream() {
-                override fun write(b: Int) { output.write(b); written++ }
-                override fun write(b: ByteArray, off: Int, len: Int) { output.write(b, off, len); written += len }
-                override fun flush() = output.flush()
+                override fun write(b: Int) { checked.write(b); written++ }
+                override fun write(b: ByteArray, off: Int, len: Int) { checked.write(b, off, len); written += len }
+                override fun flush() = checked.flush()
             }
             write(counting)
         }
+        verification?.files?.add(created.ref to digest.digest())
         return written
     }
 
-    private suspend fun folder(target: StorageProvider, parent: NodeRef, name: String): NodeRef {
-        extractionChild(target, parent, name)?.let { if (it.directory) return it.ref }
-        validateName(name)
-        return target.create(parent, name, directory = true).ref
+    private class ExtractionVerification {
+        val files = mutableListOf<Pair<NodeRef, ByteArray>>()
+        val directories = mutableSetOf<NodeRef>()
     }
 
-    private suspend fun extractionChild(provider: StorageProvider, parent: NodeRef, name: String): Entry? {
-        var found: Entry? = null
-        provider.list(parent).collect { batch ->
-            batch.forEach { if (found == null && provider.namesEqual(it.name, name)) found = it }
+    private class ExtractionNames(val archive: NodeRef, val keepBoth: Boolean) {
+        val folders = mutableMapOf<String, NodeRef>()
+        val files = mutableSetOf<NodeRef>()
+        val filePaths = mutableSetOf<String>()
+    }
+
+    private fun unsupportedFileMode(mode: Int): Boolean = (mode and 0xf000) !in setOf(0, 0x4000, 0x8000)
+
+    private suspend fun verifyBytes(provider: StorageProvider, ref: NodeRef, expected: ByteArray) {
+        provider.openRead(ref).use { input -> verifyBytes(input, expected) }
+    }
+
+    private suspend fun verifyBytes(input: InputStream, expected: ByteArray) {
+        val digest = MessageDigest.getInstance("SHA-256")
+        val buffer = ByteArray(128 * 1024)
+        while (true) {
+            currentCoroutineContext().ensureActive()
+            val read = input.read(buffer)
+            if (read < 0) break
+            digest.update(buffer, 0, read)
         }
-        // Stat before reusing or replacing an entry: listings may have stale or partial metadata.
-        return found?.let { provider.stat(it.ref) }?.also {
+        if (!digest.digest().contentEquals(expected)) {
+            throw StorageException(StorageError.IO, "Archive verification failed; source retained")
+        }
+    }
+
+    private suspend fun folder(target: StorageProvider, parent: NodeRef, name: String, path: String, names: ExtractionNames): NodeRef {
+        names.folders[path]?.let { ref ->
+            val entry = extractionEntry(target, ref)
+            if (!entry.directory) throw StorageException(StorageError.CONFLICT, "Extracted folder changed: $path")
+            return ref
+        }
+        validateName(name)
+        val existing = extractionChild(target, parent, name, requireExactName = !names.keepBoth)
+        val ref = if (existing != null && !names.keepBoth) {
+            if (!existing.directory || existing.name != name) {
+                throw StorageException(StorageError.CONFLICT, "Name collision: $path and ${existing.name}")
+            }
+            existing.ref
+        } else {
+            val outputName = if (existing != null) extractionName(target, parent, name, directory = true) else name
+            target.create(parent, outputName, directory = true).ref
+        }
+        names.folders[path] = ref
+        return ref
+    }
+
+    private suspend fun extractionChild(provider: StorageProvider, parent: NodeRef, name: String, requireExactName: Boolean): Entry? {
+        val found = provider.child(parent, name) ?: return null
+        // Direct lookups can echo the requested spelling on case-insensitive storage.
+        val stored = if (requireExactName) provider.list(parent, complete = true)
+            .map { batch -> batch.firstOrNull { it.name == name } }.firstOrNull { it != null }
+            ?: throw StorageException(StorageError.CONFLICT, "Name collision: $name") else found
+        return extractionEntry(provider, stored.ref)
+    }
+
+    private suspend fun extractionEntry(provider: StorageProvider, ref: NodeRef): Entry =
+        provider.stat(ref).also {
             if (it.link) throw StorageException(StorageError.UNSUPPORTED,
                 "Cannot extract to a symbolic link: ${it.name}")
         }
+
+    private suspend fun extractionName(provider: StorageProvider, parent: NodeRef, name: String, directory: Boolean): String {
+        val dot = if (directory) -1 else name.lastIndexOf('.').takeIf { it > 0 } ?: -1
+        val stem = if (dot > 0) name.substring(0, dot) else name
+        val suffix = if (dot > 0) name.substring(dot) else ""
+        var candidate = name
+        var number = 1
+        while (provider.child(parent, candidate) != null) {
+            currentCoroutineContext().ensureActive()
+            candidate = "$stem (${number++})$suffix"
+        }
+        return candidate
     }
 
     private suspend fun copy(provider: StorageProvider, ref: NodeRef, sink: OutputStream): Long {

@@ -116,12 +116,13 @@ internal fun SettingsScreen(
                                 onDiscardVault = { confirmDiscard = true })
                             NetworkKind.SMB -> SmbSettings(state, onChange) { account, isNew -> editing = account to isNew }
                             NetworkKind.B2 -> B2Settings(state, viewModel) { account, isNew -> editingB2 = account to isNew }
-                            NetworkKind.FTP, NetworkKind.SFTP -> TransferSettings(requireNotNull(network), state, onChange) {
+                            NetworkKind.FTP, NetworkKind.SFTP, NetworkKind.SSH -> TransferSettings(requireNotNull(network), state, onChange) {
                                 account, isNew -> editingTransfer = account to isNew
                             }
                         }
                         SettingsPage.PLAYER -> PlayerSettings(preferences, onChange)
                         SettingsPage.AUDIO -> AudioPlayerSettings(preferences, onChange)
+                        SettingsPage.TERMINAL -> TerminalSettings(preferences, onChange)
                         SettingsPage.DELETING -> DeletingSettings(state, viewModel, onRecycleBin)
                         SettingsPage.PROCEDURES -> ProcedureSettings(state, viewModel.procedures, viewModel.bookmarks, actions) {
                             procedureBack.action = it
@@ -162,7 +163,7 @@ internal fun SettingsScreen(
                     B2AccountEditor(account, isNew, viewModel, actions) { editingB2 = null }
                 }
                 editingTransfer?.let { (account, isNew) ->
-                    TransferAccountEditor(account, isNew, viewModel, actions) { editingTransfer = null }
+                    TransferAccountEditor(account, isNew, viewModel, actions, terminal = network == NetworkKind.SSH) { editingTransfer = null }
                 }
                 if (viewingLog) DebugLogScreen(viewModel, state.directoryPath) { viewingLog = false }
                 if (confirmDiscard) {
@@ -209,6 +210,7 @@ private enum class SettingsPage(val title: String) {
     NETWORK("Network"),
     PLAYER("Video player"),
     AUDIO("Audio player"),
+    TERMINAL("Terminal"),
     DELETING("Deleting"),
     PROCEDURES("Stored procedures"),
     TRANSFER("Export and import"),
@@ -236,6 +238,7 @@ private fun summaryOf(page: SettingsPage, state: BrowserState, recordingLog: Boo
     SettingsPage.NETWORK -> NetworkKind.entries.joinToString("  ·  ") { "${it.title}: ${it.summary(state).lowercase()}" }
     SettingsPage.PLAYER -> "Gestures and subtitle appearance"
     SettingsPage.AUDIO -> if (state.preferences.audioBackground) "Background play" else "Off"
+    SettingsPage.TERMINAL -> ""
     SettingsPage.DELETING -> if (state.recycleBin) "Deleting moves to the recycle bin"
     else "Deleting removes for good"
     SettingsPage.PROCEDURES -> ""

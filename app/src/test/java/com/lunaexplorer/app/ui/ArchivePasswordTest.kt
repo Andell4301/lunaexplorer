@@ -147,12 +147,14 @@ class ArchivePasswordTest {
         assertTrue(harness.awaitUntil { state.ready })
         val archive = encryptedZip()
 
-        viewModel.operations.extractArchive(archive, "unpacked", "hunter2")
+        viewModel.operations.extractArchive(archive, "unpacked", "hunter2", deleteAfter = true, keepBoth = true)
         assertTrue(harness.awaitUntil { state.operations.any { it.title == "Extract locked.zip" } })
         val id = state.operations.single { it.title == "Extract locked.zip" }.id
         val stored = requireNotNull(runBlocking { graph.database.request(id) })
         assertEquals(OperationType.EXTRACT_ARCHIVE, stored.type)
         assertEquals("unpacked", stored.name)
+        assertTrue("Source removal is carried by the queued request", stored.deleteAfterArchive)
+        assertTrue("Collision handling is carried by the queued request", stored.archiveKeepBoth)
         assertTrue("The spec must record that a password is needed", requireNotNull(stored.archive).needsPassword)
         assertFalse("The password must not reach storage",
             SessionCodec.json.encodeToString(stored).contains("hunter2"))
@@ -163,11 +165,12 @@ class ArchivePasswordTest {
         val source = entry("secret.txt")
 
         viewModel.operations.createArchive(listOf(source), "kept.zip",
-            ArchiveOptions(ArchiveFormat.ZIP, encryption = ZipEncryption.AES_256, password = "hunter2"))
+            ArchiveOptions(ArchiveFormat.ZIP, encryption = ZipEncryption.AES_256, password = "hunter2"), deleteAfter = true)
         assertTrue(harness.awaitUntil { state.operations.any { it.title == "Create archive kept.zip" } })
         val id = state.operations.single { it.title == "Create archive kept.zip" }.id
         val stored = requireNotNull(runBlocking { graph.database.request(id) })
         assertEquals(OperationType.CREATE_ARCHIVE, stored.type)
+        assertTrue("Source removal is carried by the queued request", stored.deleteAfterArchive)
         assertEquals(ZipEncryption.AES_256, requireNotNull(stored.archive).encryption)
         assertTrue(requireNotNull(stored.archive).needsPassword)
         assertFalse("The password must not reach storage",

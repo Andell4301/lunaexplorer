@@ -23,6 +23,7 @@ data class TransferItem(
 // Paths are relative to the configured root; an empty path names the root itself.
 interface TransferClient : Closeable {
     fun alive(): Boolean = false
+    fun shellPath(path: String): String? = null
     fun stat(path: String): TransferItem?
     fun list(path: String): List<TransferItem>
     fun mkdir(path: String)

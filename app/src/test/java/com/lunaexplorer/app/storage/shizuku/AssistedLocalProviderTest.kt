@@ -72,6 +72,21 @@ class AssistedLocalProviderTest {
         assertEquals(listOf("list primary Android/data/com.game/files", "read primary Android/data/com.game/files/save.dat"), counting.asked)
     }
 
+    @Test fun `child lookup uses the provider that can open the folder`() = runBlocking {
+        val directChild = requireNotNull(provider.child(at("Download"), "notes.txt"))
+        assertEquals(at("Download/notes.txt"), directChild.ref)
+        assertEquals(emptyList<String>(), counting.asked)
+
+        val assistedChild = requireNotNull(provider.child(at("Android/data/com.game/files"), "save.dat"))
+        assertEquals(at("Android/data/com.game/files/save.dat"), assistedChild.ref)
+        assertEquals(listOf("list primary Android/data/com.game/files"), counting.asked)
+
+        for (parent in listOf(at("Download"), at("Android/data/com.game/files"))) {
+            val failure = try { provider.child(parent, "../outside"); null } catch (error: StorageException) { error }
+            assertEquals(StorageError.INVALID_NAME, failure?.reason)
+        }
+    }
+
     @Test fun `in a volume's Android folder, data and obb are described by the helper that will open them`() = runBlocking {
         val names = provider.list(at("Android")).toList().flatten().map { it.name }.toSet()
 

@@ -207,6 +207,21 @@ internal fun PathBar(
                             leadingIcon = { Icon(Icons.AutoMirrored.Outlined.OpenInNew, null) },
                             onClick = { menu = false; onSystemBrowser() })
                     }
+                    if (!folder) {
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("Terminal") },
+                            leadingIcon = { Icon(Icons.Outlined.Terminal, null) },
+                            onClick = { menu = false; viewModel.showOverlay(Overlay.Terminal()) })
+                    }
+                    if (folder && viewModel.canOpenTerminalHere()) {
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("Open terminal here") },
+                            leadingIcon = { Icon(Icons.Outlined.Terminal, null) },
+                            onClick = {
+                                menu = false
+                                viewModel.showOverlay(Overlay.Terminal(state.directory?.ref, state.selectedEntries))
+                            })
+                    }
                 }
             }
         }

@@ -1,0 +1,8 @@
+. /system/etc/mkshrc
+
+# mksh drops its automatic line break on the first prompt.
+if (( USER_ID )); then
+    PS1=${PS1%'$ '}$'\n$ '
+else
+    PS1=${PS1%'# '}$'\n# '
+fi

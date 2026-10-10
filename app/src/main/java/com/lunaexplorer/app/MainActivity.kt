@@ -41,6 +41,7 @@ import com.lunaexplorer.app.ui.LunaApp
 import com.lunaexplorer.app.model.ThemeMode
 import com.lunaexplorer.app.model.Overlay
 import com.lunaexplorer.app.work.ProcedureNotifications
+import com.lunaexplorer.app.terminal.TerminalService
 import com.lunaexplorer.core.Capability
 import com.lunaexplorer.core.Entry
 import kotlinx.coroutines.CancellationException
@@ -55,6 +56,7 @@ class MainActivity : FragmentActivity() {
     private val requestedFolder = mutableStateOf<String?>(null)
     private val requestedFile = mutableStateOf<ViewerAdvertising.ViewRequest?>(null)
     private val requestedQueue = mutableStateOf(false)
+    private val requestedTerminal = mutableStateOf(false)
     private lateinit var pictureInPicture: ActivityPictureInPicture
 
     // App-launched activities also trigger auto-enter PiP; startActivity routes through this override.
@@ -91,6 +93,7 @@ class MainActivity : FragmentActivity() {
         Shortcuts.folderFrom(intent)?.let { requestedFolder.value = it }
         ViewerAdvertising.viewRequestFrom(intent)?.let { requestedFile.value = it }
         if (intent.action == ProcedureNotifications.ACTION) requestedQueue.value = true
+        if (intent.action == TerminalService.ACTION_OPEN) requestedTerminal.value = true
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -99,6 +102,7 @@ class MainActivity : FragmentActivity() {
         // On recreation the ViewModel already holds whatever this intent opened.
         if (savedInstanceState == null) requestedFile.value = ViewerAdvertising.viewRequestFrom(intent)
         if (savedInstanceState == null) requestedQueue.value = intent.action == ProcedureNotifications.ACTION
+        if (savedInstanceState == null) requestedTerminal.value = intent.action == TerminalService.ACTION_OPEN
         pictureInPicture = ActivityPictureInPicture(this)
         enableEdgeToEdge()
         setContent {
@@ -115,6 +119,13 @@ class MainActivity : FragmentActivity() {
                 if (state.ready && pendingQueue) {
                     requestedQueue.value = false
                     vm.showOverlay(Overlay.Queue)
+                }
+            }
+            val pendingTerminal by requestedTerminal
+            LaunchedEffect(state.ready, pendingTerminal) {
+                if (state.ready && pendingTerminal) {
+                    requestedTerminal.value = false
+                    vm.showOverlay(Overlay.Terminal())
                 }
             }
 
@@ -170,7 +181,8 @@ class MainActivity : FragmentActivity() {
 
             var notificationRequested by rememberSaveable { mutableStateOf(false) }
             val notifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { allowed ->
-                if (!allowed) vm.showMessage("Enable notifications in Android settings to see background progress.")
+                if (allowed) TerminalService.refreshNotification()
+                else vm.showMessage("Enable notifications in Android settings to see background progress.")
             }
             val working = state.operations.any { it.status == "QUEUED" || it.status == "RUNNING" }
             LaunchedEffect(working) {

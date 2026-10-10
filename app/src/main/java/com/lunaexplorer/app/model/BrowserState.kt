@@ -8,7 +8,12 @@ import com.lunaexplorer.core.*
 import kotlinx.serialization.Serializable
 
 /** [intoFolder] is null to extract without a containing folder. */
-data class ExtractPlan(val intoFolder: String?, val password: String = "")
+data class ExtractPlan(
+    val intoFolder: String?,
+    val password: String = "",
+    val deleteAfter: Boolean = false,
+    val keepBoth: Boolean = false,
+)
 
 /** With [extract] set, the entry is an archive to unpack at the paste target, not a file to copy. */
 data class Clipboard(val entries: List<Entry>, val move: Boolean, val extract: ExtractPlan? = null)

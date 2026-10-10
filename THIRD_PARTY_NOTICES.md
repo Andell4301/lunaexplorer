@@ -19,6 +19,7 @@ for readability; release shrinking may remove unused code.
 | Kotlin serialization | 1.9.0 | Apache-2.0 | [kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization) |
 | SMBJ and ASN.1 support | SMBJ 0.14.0; asn-one 0.6.0 | Apache-2.0 | [SMBJ](https://github.com/hierynomus/smbj), [asn-one](https://github.com/hierynomus/asn-one) |
 | SSHJ | 0.40.0 | Apache-2.0; bundled BSD-3-Clause and MIT notices | [SSHJ](https://github.com/hierynomus/sshj/tree/v0.40.0) |
+| xterm.js and Fit addon (bundled assets) | 6.0.0; 0.11.0 | MIT | [xterm.js](https://github.com/xtermjs/xterm.js) |
 | SMBJ-RPC / DCE-RPC | 0.12.1 | BSD-3-Clause | [SMBJ-RPC](https://github.com/rapid7/smbj-rpc/tree/dcerpc-0.12.1) |
 | Bouncy Castle provider, PKIX and utilities | bcprov and bcutil 1.80.2; bcpkix 1.80 | Bouncy Castle License (MIT) | [Bouncy Castle](https://www.bouncycastle.org/) |
 | MBassador | 1.3.0 | MIT | [MBassador](https://github.com/bennidi/mbassador/tree/1.3.0) |
@@ -40,6 +41,8 @@ for readability; release shrinking may remove unused code.
 
 Commons Net supplies FTP and FTPS. SSHJ supplies SFTP and SSH authentication,
 with Bouncy Castle's PKIX and utility modules for private-key parsing.
+xterm.js supplies the terminal emulator. Its JavaScript, stylesheet and Fit addon
+are bundled from the official npm packages; the terminal loads no remote assets.
 
 The packaged notices preserve the five Apache Commons `NOTICE.txt` files,
 SSHJ's upstream `NOTICE`, component-specific MIT/BSD notices, and the Media3 Sonic attribution. Common

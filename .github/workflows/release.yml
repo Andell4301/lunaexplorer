@@ -29,7 +29,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
-          packages: 'platforms;android-37.0 build-tools;36.0.0 platform-tools'
+          packages: 'platforms;android-37.0 build-tools;36.0.0 platform-tools ndk;30.0.16248370 cmake;3.22.1'
       - name: Test and lint
         run: ./gradlew --no-daemon --max-workers=1 :check
       - name: Build and verify signed APK
@@ -85,10 +85,11 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 30
-      - name: Create draft release
+      - name: Create or update release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          REPLACE_ASSETS: ${{ github.event.forced }}
         shell: bash
         run: |
           set -euo pipefail
@@ -96,8 +97,12 @@ jobs:
           if [[ "${GITHUB_REF_NAME%%+*}" == *-* ]]; then
             prerelease=(--prerelease)
           fi
-          gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --draft \
-            --title "Luna Explorer ${GITHUB_REF_NAME#v}" --generate-notes "${prerelease[@]}"
+          if [[ "$REPLACE_ASSETS" == "true" ]] && gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/* --verify-tag --draft \
+              --title "Luna Explorer ${GITHUB_REF_NAME#v}" --generate-notes "${prerelease[@]}"
+          fi
       - name: Remove signing key
         if: always()
         shell: bash

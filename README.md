@@ -24,6 +24,7 @@ I'm primarily a Python and Rust developer. I'm very new to Kotlin. I'm learning,
 - **Archives:** browse and extract archives; create ZIP, TAR, GZIP and XZ archives, including encrypted ZIP files.
 - **Viewers and editors:** images, PDF, EPUB, DOCX/PPTX previews, text and code editing with find and syntax highlighting, and a searchable hex viewer. Viewers can be offered to other apps through "Open with Luna".
 - **Media:** audio and video playback, configurable video exit behavior, picture in picture, background play, track selection, external subtitles, embedded text subtitle viewing, playback speed, and subtitle appearance controls.
+- **Terminal:** interactive SSH and local Android shells, terminal sessions alongside the browser, opening a shell in the current folder, and inserting selected file paths.
 - **Tools:** storage analysis, duplicate detection, installed-app inspection, APK extraction, package installation, checksums and file metadata.
 - **Appearance:** light and dark themes, accent colors, colorful icons, adjustable sizing, and a tablet sidebar.
 
@@ -33,6 +34,7 @@ Requirements:
 
 - JDK 21 or 25.
 - Android SDK Platform 37.0 and Build Tools 36.0.0.
+- Android NDK 30.0.16248370 and CMake 3.22.1 for the local terminal PTY.
 - Android Studio compatible with Android Gradle Plugin 9.4.0, or the Android command-line tools.
 
 The Gradle wrapper is included. Set the SDK location through Android Studio, `ANDROID_HOME`, or an untracked `local.properties` file:
@@ -68,6 +70,18 @@ Android 11 and later close `Android/data` and `Android/obb` to file managers. Wi
 Network passwords, SSH private keys and passphrases, and B2 application keys are stored encrypted using Android Keystore. Optional biometric or device-credential authentication controls access to the credential vault. Network thumbnails use a download budget set per provider, with a default of 25 MB per thumbnail. B2 folder listings are saved on the device and read again only on refresh; they can be cleared under Settings, Network, Backblaze B2.
 
 FTP supports anonymous or password login, with plain FTP or explicit/implicit TLS. SFTP supports passwords and imported SSH private keys, including encrypted keys; approve the server’s SHA-256 host-key fingerprint when adding a connection under Settings → Network. Both providers support uploads, downloads, folder creation, rename, move, delete and existing-file replacement. Replacements keep the previous file under a backup name until the verified copy is published. FTP/FTPS asks for confirmation before overwriting or merging: FTP checks for name conflicts before uploading or renaming, but cannot prevent concurrent server changes between that check and the command.
+
+Open **Terminal** from Home or the folder menu for a local shell or an SSH session. SSH accounts share SFTP's saved credentials and trusted host keys; add or edit them under Settings → Network → SSH. Testing an account there checks SSH authentication without requiring an SFTP subsystem. A plain SSH session starts the server's normal shell and does not use the account's file-browser root.
+
+**Open terminal here** starts in the current local or SFTP folder. **Files** returns to the browser with the session still open; open Terminal again to resume. Select files and choose Open terminal here to make **Insert paths** available, or use **Insert cd** to prepare a folder change. These insert shell-quoted text without pressing Enter. Folder launches require a POSIX `sh` on the server and then open the configured login shell; control characters in inserted paths use dollar-single-quote syntax, supported by Bash, Zsh and Android's shell. An SFTP server using a separate chroot namespace may expose paths its SSH shell cannot open.
+
+The terminal supports full-screen programs, colors, scrollback, selection and clipboard paste, hardware keyboards, and an extra-key row with Ctrl, Esc, Tab, arrows and function keys. Active sessions use a foreground service while you switch apps; its notification returns to the terminal or disconnects it. Closing the terminal or removing Luna from Recents disconnects the session. Remote tmux or screen can keep server-side work alive across a disconnect.
+
+**Keyboard** opens the keyboard explicitly. **Tap for keyboard** controls whether tapping terminal space opens it, and **No suggestions** disables keyboard suggestions and corrections by default. Both settings are also under Settings → Terminal and are included in settings export and import.
+
+The local shell shows the full working directory above a separate `$ ` prompt, keeping command editing consistent from the first prompt onward.
+
+The local shell runs `/system/bin/sh` as Luna's app user, with the tools Android supplies. It has Luna's storage permissions, not root or Shizuku privileges, and is not a Linux distribution. Commands entered in either shell execute directly; they do not use Luna's operation queue, verification or recycle bin. Returning to files refreshes the listing.
 
 File-operation capabilities depend on the storage provider. Copies are verified before completion; interrupted operations and cleanup failures are reported. Atomicity and recovery guarantees depend on the provider and filesystem.
 

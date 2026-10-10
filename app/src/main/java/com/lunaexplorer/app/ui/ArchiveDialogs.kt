@@ -4,11 +4,13 @@ package com.lunaexplorer.app.ui
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
@@ -17,13 +19,14 @@ import com.lunaexplorer.core.ArchiveFormat
 import com.lunaexplorer.core.archiveFormatOf
 import com.lunaexplorer.core.ArchiveOptions
 import com.lunaexplorer.core.CompressionPreset
+import com.lunaexplorer.core.Capability
 import com.lunaexplorer.core.Entry
 import com.lunaexplorer.core.ZipEncryption
 
 val LocalArchives = staticCompositionLocalOf<ArchiveEngine?> { null }
 
 @Composable
-fun ArchiveDialog(entries: List<Entry>, onDismiss: () -> Unit, onCreate: (String, ArchiveOptions) -> Unit) {
+fun ArchiveDialog(entries: List<Entry>, onDismiss: () -> Unit, onCreate: (String, ArchiveOptions, Boolean) -> Unit) {
     val suggested = remember(entries) {
         entries.singleOrNull()?.name?.substringBeforeLast('.')?.ifBlank { null } ?: "archive"
     }
@@ -35,6 +38,8 @@ fun ArchiveDialog(entries: List<Entry>, onDismiss: () -> Unit, onCreate: (String
     var password by rememberSaveable { mutableStateOf("") }
     var confirm by rememberSaveable { mutableStateOf("") }
     var reveal by rememberSaveable { mutableStateOf(false) }
+    var deleteAfter by rememberSaveable { mutableStateOf(false) }
+    val canDelete = entries.all { Capability.DELETE in it.capabilities }
     val fileName = "${name.trim()}.${format.extension}"
     val singleFileOnly = (format == ArchiveFormat.GZIP || format == ArchiveFormat.XZ) &&
         entries.count { !it.directory } != entries.size
@@ -107,6 +112,7 @@ fun ArchiveDialog(entries: List<Entry>, onDismiss: () -> Unit, onCreate: (String
                     }
                 }
 
+                ArchiveOption("Delete files after archiving", deleteAfter, canDelete) { deleteAfter = it }
                 Text("${entries.size} item${if (entries.size == 1) "" else "s"} will be added.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -115,7 +121,8 @@ fun ArchiveDialog(entries: List<Entry>, onDismiss: () -> Unit, onCreate: (String
             TextButton(
                 onClick = {
                     onCreate(fileName, ArchiveOptions(format, level, comment.trim(),
-                        if (encrypting) encryption else ZipEncryption.NONE, if (encrypting) password else ""))
+                        if (encrypting) encryption else ZipEncryption.NONE, if (encrypting) password else ""),
+                        deleteAfter && canDelete)
                 },
                 enabled = valid,
             ) { Text("Create") }
@@ -124,20 +131,19 @@ fun ArchiveDialog(entries: List<Entry>, onDismiss: () -> Unit, onCreate: (String
     )
 }
 
-/**
- * [onExtract] receives the new folder name (null extracts loose), the password ("" if none) and whether to
- * extract into the current folder; false means the archive is carried and extracted at a folder chosen later.
- */
 @Composable
-fun ExtractDialog(archive: Entry, onDismiss: () -> Unit, onExtract: (String?, String, Boolean) -> Unit) {
+fun ExtractDialog(archive: Entry, onDismiss: () -> Unit, onExtract: (String?, String, Boolean, Boolean, Boolean) -> Unit) {
     val suggested = remember(archive) {
         archive.name.removeSuffix(".gz").removeSuffix(".xz").removeSuffix(".bz2").removeSuffix(".tar")
             .substringBeforeLast('.').ifBlank { "extracted" }
     }
     var intoFolder by rememberSaveable { mutableStateOf(true) }
     var folder by rememberSaveable(suggested) { mutableStateOf(suggested) }
+    var keepBoth by rememberSaveable { mutableStateOf(false) }
     var password by rememberSaveable { mutableStateOf("") }
     var reveal by rememberSaveable { mutableStateOf(false) }
+    var deleteAfter by rememberSaveable { mutableStateOf(false) }
+    val canDelete = Capability.DELETE in archive.capabilities
     val engine = LocalArchives.current
     val encryptable = remember(archive, engine) {
         (engine?.formatOf(archive.name) ?: archiveFormatOf(archive.name) ?: ArchiveFormat.ZIP) in ENCRYPTABLE
@@ -147,7 +153,7 @@ fun ExtractDialog(archive: Entry, onDismiss: () -> Unit, onExtract: (String?, St
         onDismissRequest = onDismiss,
         title = { Text("Extract ${archive.name}") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.fastVerticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Row(Modifier.fillMaxWidth().heightIn(min = 48.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("Into a new folder", Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
                     Switch(checked = intoFolder, onCheckedChange = { intoFolder = it })
@@ -155,7 +161,7 @@ fun ExtractDialog(archive: Entry, onDismiss: () -> Unit, onExtract: (String?, St
                 if (intoFolder) {
                     OutlinedTextField(folder, { folder = it }, label = { Text("Folder name") },
                         singleLine = true, modifier = Modifier.fillMaxWidth())
-                } else {
+                } else if (!keepBoth) {
                     Text("Replaces colliding names.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -167,6 +173,8 @@ fun ExtractDialog(archive: Entry, onDismiss: () -> Unit, onExtract: (String?, St
                             TextButton(onClick = { reveal = !reveal }) { Text(if (reveal) "Hide" else "Show") }
                         })
                 }
+                ArchiveOption("Rename conflicting files and folders", keepBoth, enabled = true) { keepBoth = it }
+                ArchiveOption("Delete archive after extraction", deleteAfter, canDelete) { deleteAfter = it }
             }
         },
         confirmButton = {
@@ -174,16 +182,26 @@ fun ExtractDialog(archive: Entry, onDismiss: () -> Unit, onExtract: (String?, St
             val secret = { if (encryptable) password else "" }
             val ready = !intoFolder || folder.isNotBlank()
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                TextButton(onClick = { onExtract(name(), secret(), false) }, enabled = ready) {
+                TextButton(onClick = { onExtract(name(), secret(), false, deleteAfter && canDelete, keepBoth) }, enabled = ready) {
                     Text("Choose folder")
                 }
-                TextButton(onClick = { onExtract(name(), secret(), true) }, enabled = ready) {
+                TextButton(onClick = { onExtract(name(), secret(), true, deleteAfter && canDelete, keepBoth) }, enabled = ready) {
                     Text("Extract here")
                 }
             }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
     )
+}
+
+@Composable
+private fun ArchiveOption(label: String, checked: Boolean, enabled: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 48.dp)
+        .toggleable(checked, enabled = enabled, role = Role.Checkbox, onValueChange = onCheckedChange),
+        verticalAlignment = Alignment.CenterVertically) {
+        Checkbox(checked, onCheckedChange = null, enabled = enabled)
+        Text(label, style = MaterialTheme.typography.bodyLarge)
+    }
 }
 
 private val ENCRYPTABLE = setOf(ArchiveFormat.ZIP, ArchiveFormat.SEVEN_Z, ArchiveFormat.RAR)

@@ -15,6 +15,7 @@ import java.nio.file.DirectoryNotEmptyException
 import java.nio.file.DirectoryStream
 import java.nio.file.Files
 import java.nio.file.LinkOption.NOFOLLOW_LINKS
+import java.nio.file.NoSuchFileException
 import java.nio.file.Path
 import java.nio.file.StandardCopyOption
 import java.nio.file.StandardOpenOption
@@ -27,6 +28,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.withContext
@@ -101,6 +103,34 @@ class LocalStorageProvider(
     override fun refFor(path: String): NodeRef? = referenceTo(path)
 
     override suspend fun stat(ref: NodeRef): Entry = io { entry(rootDefinition(decode(ref).root), resolve(ref)) }
+
+    override suspend fun child(parent: NodeRef, name: String): Entry? = io {
+        validateName(name)
+        val root = rootDefinition(decode(parent).root)
+        val path = resolve(parent)
+        val requested = try {
+            Files.readAttributes(path.resolve(name), BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+        } catch (_: NoSuchFileException) {
+            return@io null
+        }
+        val key = requested.fileKey()
+        var exact: String? = null
+        var alias: String? = null
+        list(parent, complete = true).firstOrNull { batch ->
+            exact = batch.firstOrNull { it.name == name }?.name
+            if (exact == null && alias == null && key != null) {
+                for (candidate in batch) {
+                    if (!candidate.name.equals(name, ignoreCase = true)) continue
+                    // Compare links themselves; their targets may be other children of this folder.
+                    val attributes = Files.readAttributes(path.resolve(candidate.name), BasicFileAttributes::class.java, NOFOLLOW_LINKS)
+                    if (attributes.fileKey() == key) { alias = candidate.name; break }
+                }
+            }
+            exact != null
+        }
+        val storedName = exact ?: alias ?: fail(StorageError.CONFLICT, "The item could not be identified")
+        entry(root, path.resolve(storedName))
+    }
 
     override suspend fun parentOf(ref: NodeRef): NodeRef? {
         val location = decode(ref)

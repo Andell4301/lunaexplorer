@@ -314,6 +314,16 @@ internal fun PlayerGestureSettings(preferences: Preferences, onChange: (Preferen
 }
 
 @Composable
+internal fun TerminalSettings(preferences: Preferences, onChange: (Preferences) -> Unit) {
+    SwitchRow("Disable keyboard suggestions", preferences.terminalDisableSuggestions) {
+        onChange(preferences.copy(terminalDisableSuggestions = it))
+    }
+    SwitchRow("Tap to open keyboard", preferences.terminalTapOpensKeyboard) {
+        onChange(preferences.copy(terminalTapOpensKeyboard = it))
+    }
+}
+
+@Composable
 internal fun AudioPlayerSettings(preferences: Preferences, onChange: (Preferences) -> Unit) {
     SwitchRow("Background play", preferences.audioBackground) {
         onChange(preferences.copy(audioBackground = it))

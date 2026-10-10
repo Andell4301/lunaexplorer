@@ -56,7 +56,8 @@ class BrowserOperations internal constructor(
             submit(
                 OperationRequest(type = OperationType.EXTRACT_ARCHIVE, sources = listOf(archive.ref),
                     destination = destination, name = unpacking.intoFolder,
-                    archive = ArchiveSpec(needsPassword = unpacking.password.isNotEmpty())),
+                    archive = ArchiveSpec(needsPassword = unpacking.password.isNotEmpty()),
+                    deleteAfterArchive = unpacking.deleteAfter, archiveKeepBoth = unpacking.keepBoth),
                 "Extract ${archive.name} to ${_state.value.location?.title}", unpacking.password,
             )
             clearClipboard()
@@ -107,20 +108,22 @@ class BrowserOperations internal constructor(
     }
 
     /** The password goes to the queue separately from the request and is never persisted or logged. */
-    fun createArchive(sources: List<Entry>, name: String, options: ArchiveOptions) {
+    fun createArchive(sources: List<Entry>, name: String, options: ArchiveOptions, deleteAfter: Boolean = false) {
         if (sources.isEmpty()) return
         val destination = _state.value.location?.ref ?: return
         submit(OperationRequest(type = OperationType.CREATE_ARCHIVE, sources = sources.map { it.ref },
-            destination = destination, name = name, archive = options.spec()),
+            destination = destination, name = name, archive = options.spec(), deleteAfterArchive = deleteAfter),
             "Create archive $name", options.password)
     }
 
     /** [into] names a new folder; null extracts in place. */
-    fun extractArchive(archive: Entry, into: String?, password: String = "") {
+    fun extractArchive(archive: Entry, into: String?, password: String = "", deleteAfter: Boolean = false,
+        keepBoth: Boolean = false) {
         val destination = _state.value.location?.ref ?: return
         submit(OperationRequest(type = OperationType.EXTRACT_ARCHIVE, sources = listOf(archive.ref),
             destination = destination, name = into,
-            archive = ArchiveSpec(needsPassword = password.isNotEmpty())),
+            archive = ArchiveSpec(needsPassword = password.isNotEmpty()), deleteAfterArchive = deleteAfter,
+            archiveKeepBoth = keepBoth),
             "Extract ${archive.name}", password)
     }
 

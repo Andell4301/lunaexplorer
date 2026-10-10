@@ -3,6 +3,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Keeps a network read alive while the screen is off during background play. -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -165,6 +166,11 @@
             android:foregroundServiceType="mediaPlayback" />
         <service android:name=".storage.ExternalTransferService" android:exported="false"
             android:foregroundServiceType="dataSync" />
+        <service android:name=".terminal.TerminalService" android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Maintain user-started interactive SSH and local shell sessions while switching apps, until the user disconnects or the shell exits." />
+        </service>
         <service android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync" tools:node="merge" />
     </application>

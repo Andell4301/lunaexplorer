@@ -312,8 +312,9 @@ private fun LunaScaffold(
     // Dialogs use the unscaled window density: Compose recreates a dialog window when its density
     // changes, which would interrupt a UI-size slider mid-drag.
     CompositionLocalProvider(LocalDensity provides windowDensity) {
+    TerminalWorkspace(state, viewModel, actions)
     when (val overlay = state.overlay) {
-        null -> Unit
+        null, is Overlay.Terminal -> Unit
         is Overlay.EditBookmark -> EditBookmarkDialog(overlay.bookmark, onDismiss = dismiss) { title, path ->
             viewModel.bookmarks.edit(overlay.bookmark, title, path, overlay.list)
             dismiss()
@@ -357,8 +358,8 @@ private fun LunaScaffold(
             presets = DOT_FILES, onDismiss = dismiss) {
             viewModel.files.createTextFile(it); dismiss()
         }
-        Overlay.Archive -> ArchiveDialog(state.selectedEntries, onDismiss = dismiss) { name, options ->
-            viewModel.operations.createArchive(state.selectedEntries, name, options); dismiss()
+        Overlay.Archive -> ArchiveDialog(state.selectedEntries, onDismiss = dismiss) { name, options, deleteAfter ->
+            viewModel.operations.createArchive(state.selectedEntries, name, options, deleteAfter); dismiss()
         }
         Overlay.Extract -> if (viewModel.insideArchive()) {
             LaunchedEffect(Unit) {
@@ -367,10 +368,10 @@ private fun LunaScaffold(
                 dismiss()
             }
         } else state.selectedEntries.singleOrNull()?.let { archive ->
-            ExtractDialog(archive, onDismiss = dismiss) { into, password, here ->
-                if (here) viewModel.operations.extractArchive(archive, into, password)
+            ExtractDialog(archive, onDismiss = dismiss) { into, password, here, deleteAfter, keepBoth ->
+                if (here) viewModel.operations.extractArchive(archive, into, password, deleteAfter, keepBoth)
                 else {
-                    viewModel.operations.carryExtract(archive, ExtractPlan(into, password))
+                    viewModel.operations.carryExtract(archive, ExtractPlan(into, password, deleteAfter, keepBoth))
                     viewModel.showMessage("Open the folder to extract into, then Extract here")
                 }
                 dismiss()

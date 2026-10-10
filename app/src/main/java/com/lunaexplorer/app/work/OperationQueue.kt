@@ -102,6 +102,11 @@ class OperationWorker(context: Context, parameters: WorkerParameters) : Coroutin
                             if (event is OperationEvent.ItemFinished && stepType in setOf(OperationType.MOVE, OperationType.DELETE, OperationType.RENAME)) {
                                 graph.database.reconcileTrash(request.id, listOf(event.outcome))
                             }
+                            if (event is OperationEvent.ItemFinished && request.deleteAfterArchive &&
+                                event.outcome.status == ItemStatus.SUCCESS && event.outcome.source != null &&
+                                event.outcome.destination == null) {
+                                graph.database.reconcileTrash(request.id, listOf(event.outcome))
+                            }
                         }
                         if (request.type == OperationType.PROCEDURE) {
                             ProcedureExecution(ProcedurePlanner(graph.providers), graph.engine).run(request,
@@ -137,9 +142,10 @@ class OperationWorker(context: Context, parameters: WorkerParameters) : Coroutin
                     val counts = result.outcomes.groupingBy { it.status }.eachCount().entries.joinToString(" · ") {
                         "${it.value} ${it.key.name.lowercase()}"
                     }
-                    // Extracting an archive that sits in the bin leaves it there, so its trash record stays.
+                    // Extraction keeps a binned archive unless its source removal was requested.
                     if (!procedure) graph.database.reconcileTrash(request.id,
-                        if (request.type == OperationType.EXTRACT_ARCHIVE) emptyList() else result.outcomes)
+                        if (request.type == OperationType.EXTRACT_ARCHIVE && !request.deleteAfterArchive) emptyList()
+                        else result.outcomes)
                     val detail = if (procedure) {
                         requireNotNull(procedureResult).summary() + if (counts.isEmpty()) "" else " · $counts"
                     } else conflicts.firstOrNull()?.message ?: counts

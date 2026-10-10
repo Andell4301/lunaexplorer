@@ -4,6 +4,9 @@
     public <init>(android.content.Context, androidx.work.WorkerParameters);
 }
 
+-keep class com.lunaexplorer.app.terminal.TerminalService { public <init>(); }
+-keep class com.lunaexplorer.app.ui.TerminalWorkspaceModel { public <init>(android.app.Application); }
+
 # Room (via WorkManager)
 # Room 2.6.1's consumer rule omits constructors required by reflective database initialization.
 -keep class * extends androidx.room.RoomDatabase { <init>(); }
@@ -91,3 +94,11 @@
 -keepnames class net.schmizz.** { }
 # SSHJ checks for this class before reading encrypted legacy PEM keys.
 -keep interface org.bouncycastle.openssl.PEMDecryptor { *; }
+
+# JNI resolves these methods by class and method name.
+-keep class com.lunaexplorer.app.terminal.NativePty { native <methods>; }
+
+# The offline terminal calls these methods through the WebView JavaScript bridge.
+-keep class com.lunaexplorer.app.ui.TerminalBridge {
+    @android.webkit.JavascriptInterface <methods>;
+}

@@ -18,6 +18,7 @@ sealed interface Overlay {
     data object GoTo : Overlay
     data object Search : Overlay
     data object ViewOptions : Overlay
+    data class Terminal(val directory: NodeRef? = null, val entries: List<Entry> = emptyList()) : Overlay
     data object Settings : Overlay
     data object Queue : Overlay
     data class Overwrite(val operationId: String, val policy: ConflictPolicy) : Overlay

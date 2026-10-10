@@ -11,9 +11,11 @@ import androidx.compose.ui.test.junit4.v2.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.test.performScrollTo
 import com.lunaexplorer.core.Capability
 import com.lunaexplorer.core.Entry
 import com.lunaexplorer.core.NodeRef
+import com.lunaexplorer.core.ArchiveOptions
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Rule
@@ -61,7 +63,7 @@ class ArchiveDialogsUiTest {
         var here: Boolean? = null
         compose.setContent {
             MaterialTheme {
-                ExtractDialog(archive, onDismiss = {}) { folder, typed, inPlace ->
+                ExtractDialog(archive, onDismiss = {}) { folder, typed, inPlace, _, _ ->
                     into = folder; password = typed; here = inPlace
                 }
             }
@@ -72,7 +74,7 @@ class ArchiveDialogsUiTest {
         assertEquals("Secret1", password)
         assertEquals("Extracting here unpacks into the folder on screen", true, here)
 
-        compose.onNode(isToggleable()).performClick()
+        compose.onAllNodes(isToggleable())[0].performClick()
         compose.onNodeWithText("Extract here").performClick()
         assertNull("Extracting in place passes no folder", into)
         assertEquals("Secret1", password)
@@ -85,7 +87,7 @@ class ArchiveDialogsUiTest {
         var here: Boolean? = null
         compose.setContent {
             MaterialTheme {
-                ExtractDialog(archive, onDismiss = {}) { folder, _, inPlace -> into = folder; here = inPlace }
+                ExtractDialog(archive, onDismiss = {}) { folder, _, inPlace, _, _ -> into = folder; here = inPlace }
             }
         }
         compose.onNodeWithText("Choose folder").performClick()
@@ -99,11 +101,92 @@ class ArchiveDialogsUiTest {
         var password: String? = null
         compose.setContent {
             MaterialTheme {
-                ExtractDialog(archive, onDismiss = {}) { _, typed, _ -> password = typed }
+                ExtractDialog(archive, onDismiss = {}) { _, typed, _, _, _ -> password = typed }
             }
         }
         compose.onNodeWithText("Password").assertDoesNotExist()
         compose.onNodeWithText("Extract here").performClick()
         assertEquals("Tars carry no password for the engine to use", "", password)
+    }
+
+    @Test fun `source deletion is carried from the add to archive checkbox`() {
+        val source = Entry(NodeRef("local", "source"), "source.txt", directory = false,
+            capabilities = setOf(Capability.READ, Capability.DELETE))
+        var deleteAfter: Boolean? = null
+        var options: ArchiveOptions? = null
+        compose.setContent {
+            MaterialTheme {
+                ArchiveDialog(listOf(source), onDismiss = {}) { _, archiveOptions, delete ->
+                    options = archiveOptions
+                    deleteAfter = delete
+                }
+            }
+        }
+
+        compose.onNodeWithText("Create").performClick()
+        assertEquals(false, deleteAfter)
+        compose.onNodeWithText("Delete files after archiving").performScrollTo().performClick()
+        compose.onNodeWithText("Create").performClick()
+        assertEquals(true, deleteAfter)
+        assertEquals(com.lunaexplorer.core.ArchiveFormat.ZIP, options?.format)
+    }
+
+    @Test fun `source archive deletion follows either extraction destination`() {
+        val archive = Entry(NodeRef("local", "bundle.zip"), "bundle.zip", directory = false,
+            capabilities = setOf(Capability.READ, Capability.DELETE))
+        var deleteAfter: Boolean? = null
+        var here: Boolean? = null
+        compose.setContent {
+            MaterialTheme {
+                ExtractDialog(archive, onDismiss = {}) { _, _, inPlace, delete, _ ->
+                    here = inPlace
+                    deleteAfter = delete
+                }
+            }
+        }
+
+        compose.onNodeWithText("Extract here").performClick()
+        assertEquals(false, deleteAfter)
+        compose.onNodeWithText("Delete archive after extraction").performScrollTo().performClick()
+        compose.onNodeWithText("Choose folder").performClick()
+        assertEquals(true, deleteAfter)
+        assertEquals(false, here)
+        compose.onNodeWithText("Extract here").performClick()
+        assertEquals(true, deleteAfter)
+        assertEquals(true, here)
+    }
+
+    @Test fun `keep both follows either extraction destination`() {
+        val archive = Entry(NodeRef("local", "bundle.zip"), "bundle.zip", directory = false,
+            capabilities = setOf(Capability.READ, Capability.DELETE))
+        var keepBoth: Boolean? = null
+        var here: Boolean? = null
+        var into: String? = "unset"
+        compose.setContent {
+            MaterialTheme {
+                ExtractDialog(archive, onDismiss = {}) { folder, _, inPlace, _, keep ->
+                    into = folder
+                    here = inPlace
+                    keepBoth = keep
+                }
+            }
+        }
+
+        compose.onNodeWithText("Rename conflicting files and folders").performScrollTo().performClick()
+        compose.onNodeWithText("Choose folder").performClick()
+        assertEquals(true, keepBoth)
+        assertEquals(false, here)
+        assertEquals("bundle", into)
+
+        compose.onAllNodes(isToggleable())[0].performScrollTo().performClick()
+        compose.onNodeWithText("Replaces colliding names.").assertDoesNotExist()
+        compose.onNodeWithText("Extract here").performClick()
+        assertEquals(true, keepBoth)
+        assertEquals(true, here)
+        assertNull(into)
+
+        compose.onNodeWithText("Rename conflicting files and folders").performScrollTo().performClick()
+        compose.onNodeWithText("Extract here").performClick()
+        assertEquals(false, keepBoth)
     }
 }

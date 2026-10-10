@@ -22,12 +22,19 @@ require(!hasReleaseSigning || !signReleaseWithDebugKey) {
 android {
     namespace = "com.lunaexplorer.app"
     compileSdk = 37
+    ndkVersion = "30.0.16248370"
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
     defaultConfig {
         applicationId = "com.lunaexplorer.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "1.4.0"
+        versionCode = 14
+        versionName = "1.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; aidl = true }
@@ -152,6 +159,8 @@ val checkReleaseReflection = tasks.register("checkReleaseReflection") {
             "Lcom/lunaexplorer/app/LunaApplication;" to "()V",
             "Lcom/lunaexplorer/app/MainActivity;" to "()V",
             "Lcom/lunaexplorer/app/playback/PlaybackService;" to "()V",
+            "Lcom/lunaexplorer/app/terminal/TerminalService;" to "()V",
+            "Lcom/lunaexplorer/app/ui/TerminalWorkspaceModel;" to "(Landroid/app/Application;)V",
             // MBassador (smbj's event bus) builds handler invocations reflectively.
             "Lnet/engio/mbassy/dispatch/ReflectiveHandlerInvocation;" to "(Lnet/engio/mbassy/subscription/SubscriptionContext;)V",
             // Instantiated by SLF4J from the slf4j.provider property.
@@ -207,6 +216,38 @@ val checkReleaseReflection = tasks.register("checkReleaseReflection") {
         }
         require(missingHandlers.isEmpty()) {
             "Release DEX is missing smbj event handlers in ${missingHandlers.keys}; closed trees would stay cached"
+        }
+        val terminalCallbacks = listOf(
+            "ready" to "()V",
+            "tapped" to "()V",
+            "screenReaderEnabled" to "()Z",
+            "input" to "(Ljava/lang/String;)V",
+            "resize" to "(II)V",
+            "written" to "(I)V",
+            "directory" to "(Ljava/lang/String;)V",
+        )
+        val missingTerminalCallbacks = terminalCallbacks.filterNot { (name, signature) ->
+            hasMethod("Lcom/lunaexplorer/app/ui/TerminalBridge;", name, signature)
+        }
+        require(missingTerminalCallbacks.isEmpty()) {
+            "Release DEX is missing terminal JavaScript callbacks: $missingTerminalCallbacks"
+        }
+        val nativeMethods = mapOf(
+            "open" to "([B[[BII)[I",
+            "read" to "(II[BII)I",
+            "write" to "(II[BII)I",
+            "resize" to "(III)V",
+            "cancel" to "(I)V",
+            "terminate" to "(II)V",
+            "awaitExit" to "(I)I",
+            "reap" to "(I)V",
+            "dispose" to "(II)V",
+        )
+        val missingNative = nativeMethods.filterNot { (name, signature) ->
+            hasMethod("Lcom/lunaexplorer/app/terminal/NativePty;", name, signature)
+        }
+        require(missingNative.isEmpty()) {
+            "Release DEX is missing local terminal JNI entry points: $missingNative"
         }
         val fields = mapOf(
             // SevenZDictionaries fits 7z dictionaries to their content through this one.

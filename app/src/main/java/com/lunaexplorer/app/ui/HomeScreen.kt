@@ -79,6 +79,9 @@ internal fun HomeScreen(
         item { HomeHeading("TOOLS") }
         item {
             FlowRow(Modifier.padding(horizontal = 16.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                SuggestionChip(onClick = { viewModel.showOverlay(Overlay.Terminal()) },
+                    label = { Text("Terminal") },
+                    icon = { ChipIcon(Icons.Outlined.Terminal, Hue.ACCENT) })
                 SuggestionChip(onClick = { viewModel.showScreen(Screen.STORAGE) },
                     label = { Text("Storage analysis") },
                     icon = { ChipIcon(Icons.Outlined.PieChart, Hue.ANALYSIS) })

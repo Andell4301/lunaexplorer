@@ -2,6 +2,8 @@ package com.lunaexplorer.app.storage.transfer
 
 import com.lunaexplorer.app.storage.RemoteFailure
 import com.lunaexplorer.app.storage.RemoteReader
+import com.lunaexplorer.app.storage.ShellAddressable
+import com.lunaexplorer.app.storage.ShellLocation
 import com.lunaexplorer.core.BudgetedReads
 import com.lunaexplorer.core.Capability
 import com.lunaexplorer.core.Entry
@@ -41,7 +43,7 @@ class TransferStorageProvider(
     private val accounts: () -> List<TransferAccount>,
     private val credentials: (TransferAccount) -> TransferCredentials,
     private val connector: TransferConnector,
-) : StorageProvider, BudgetedReads {
+) : StorageProvider, BudgetedReads, ShellAddressable {
     private val seekable = id == TransferProtocol.SFTP.providerId
     override val features = buildSet {
         add(Feature.STABLE_KEYS)
@@ -52,6 +54,16 @@ class TransferStorageProvider(
     private val connections = TransferConnections(connector, credentials, seekable)
 
     init { require(TransferProtocol.entries.any { it.providerId == id }) }
+
+    override val supportsShell: Boolean get() = seekable
+
+    override suspend fun shellLocation(ref: NodeRef): ShellLocation? {
+        if (!supportsShell) return null
+        val place = place(ref)
+        return io(place) { client ->
+            client.shellPath(place.path)?.let { ShellLocation(place.account.id, it) }
+        }
+    }
 
     fun disconnect(accountId: String) = connections.disconnect(accountId)
 

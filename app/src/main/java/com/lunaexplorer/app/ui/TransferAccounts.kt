@@ -60,10 +60,11 @@ class TransferAccounts(
         return null
     }
 
-    suspend fun test(account: TransferAccount, credentials: TransferCredentials?): Result<Unit> = try {
+    suspend fun test(account: TransferAccount, credentials: TransferCredentials?, terminal: Boolean = false): Result<Unit> = try {
         val kept = graph.vault.secrets.value?.transferCredentials?.get(account.id)
         val provider = if (account.protocol == TransferProtocol.SFTP) graph.sftp else graph.ftp
-        provider.probe(account, credentials ?: kept ?: TransferCredentials())
+        if (terminal) com.lunaexplorer.app.terminal.SshTerminalConnector().probe(account, credentials ?: kept ?: TransferCredentials())
+        else provider.probe(account, credentials ?: kept ?: TransferCredentials())
         Result.success(Unit)
     } catch (cancelled: CancellationException) {
         throw cancelled

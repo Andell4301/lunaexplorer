@@ -162,6 +162,18 @@ class SshjConnectorTest {
         assertEquals(1, server.closedFiles)
     }
 
+    @Test fun `shell paths use the server root and preserve names exactly`() {
+        server.metadata["/vault/folder"] = attributes(FileMode.Type.DIRECTORY)
+        val name = "folder/  it's here\n"
+        server.files["/vault/$name"] = byteArrayOf(1)
+
+        connect().use { client ->
+            assertEquals("/vault", client.shellPath(""))
+            assertEquals("/vault/$name", client.shellPath(name))
+            assertEquals(StorageError.INVALID_NAME, failure { client.shellPath("../outside") }.reason)
+        }
+    }
+
     @Test fun `a sequential stream pipelines reads and preserves every byte`() {
         val bytes = ByteArray(1_000_019) { (it * 31).toByte() }
         server.files["/vault/data"] = bytes

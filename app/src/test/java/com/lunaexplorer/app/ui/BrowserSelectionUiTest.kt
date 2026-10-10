@@ -54,7 +54,7 @@ class BrowserSelectionUiTest : RobolectricBrowserUiTest() {
         listOf("Copy", "Move", "Share", "Rename", "Delete", "More").forEach {
             compose.onNodeWithText(it).assertIsDisplayed()
         }
-        listOf("Select all", "Select all files", "Select all folders", "Invert selection").forEach {
+        listOf("Select all", "Select all files", "Select all folders", "Invert selection", "Fill selection").forEach {
             compose.onNodeWithContentDescription(it).assertIsDisplayed()
         }
         assertTrue("What is rare is behind More rather than on the bar",
@@ -70,5 +70,20 @@ class BrowserSelectionUiTest : RobolectricBrowserUiTest() {
         }
         compose.onNodeWithText("Look inside").performScrollTo().assertIsNotEnabled()
         compose.onNodeWithText("Go to location").performScrollTo().assertIsNotEnabled()
+    }
+
+    @Test
+    fun fillSelectsTheRowsBetweenTwoSelectedItems() {
+        awaitListing()
+        val viewModel = compose.runOnUiThread { ViewModelProvider(compose.activity)[BrowserViewModel::class.java] }
+        compose.onNodeWithContentDescription("Select alpha").performClick()
+        compose.onNodeWithContentDescription("Fill selection").assertIsNotEnabled()
+        compose.onNodeWithContentDescription("Select gamma.txt").performClick()
+
+        compose.onNodeWithContentDescription("Fill selection").performClick()
+        compose.waitForIdle()
+
+        assertEquals(setOf("alpha", "beta.txt", "gamma.txt"),
+            viewModel.state.value.selectedEntries.map { it.name }.toSet())
     }
 }

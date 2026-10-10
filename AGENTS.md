@@ -14,7 +14,7 @@ Instructions for AI coding agents working on Luna Explorer, an Android file mana
 
 ## Build and verify
 
-Needs JDK 21 or 25, Android SDK Platform 37 and Build Tools 36.0.0. Use the Gradle wrapper.
+Needs JDK 21 or 25, Android SDK Platform 37, Build Tools 36.0.0, NDK 30.0.16248370 and CMake 3.22.1. Use the Gradle wrapper.
 
 ```sh
 ./gradlew :core:test --tests '*OperationEngineTest'          # one core suite

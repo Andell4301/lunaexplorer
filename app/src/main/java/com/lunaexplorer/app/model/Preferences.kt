@@ -108,6 +108,8 @@ data class Preferences(
     val playerBrightnessGesture: Boolean = true,
     val videoExitBehavior: VideoExitBehavior = VideoExitBehavior.PICTURE_IN_PICTURE,
     val audioBackground: Boolean = true,
+    val terminalDisableSuggestions: Boolean = true,
+    val terminalTapOpensKeyboard: Boolean = true,
     val renameIncludesExtension: Boolean = false,
     /** [ViewerAdvertising] kind keys. */
     val openWithLuna: Set<String> = ViewerAdvertising.allKeys,

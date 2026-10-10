@@ -9,6 +9,7 @@ import androidx.lifecycle.viewModelScope
 import com.lunaexplorer.app.AppGraph
 import com.lunaexplorer.app.debug.DebugLog
 import com.lunaexplorer.app.model.*
+import com.lunaexplorer.app.storage.ShellAddressable
 import com.lunaexplorer.app.storage.InstalledApp
 import com.lunaexplorer.app.storage.LunaDocumentsProvider
 import com.lunaexplorer.app.storage.MediaCategory
@@ -217,14 +218,11 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     }
 
     private suspend fun publishFlat(session: FlatSession) {
-        val preferences = _state.value.preferences
         val raw = session.raw
         val mine = ++session.publishes
-        val (visible, runs) = withContext(Dispatchers.Default) {
-            val ordered = if (session.presorted) raw
-            else sortEntries(raw, preferences, _state.value.filter, _state.value.extensions)
-            ordered to sectionsFor(ordered, preferences, session.view)
-        }
+        val (visible, runs) = orderedRows(raw, session.presorted) {
+            mine == session.publishes && liveIsFlat(session)
+        } ?: return
         // A newer publish has these rows or more; one whose tab was left sorted by the other tab's options.
         if (mine != session.publishes || !liveIsFlat(session)) return
         session.visible = visible
@@ -263,10 +261,11 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
         }
     }
 
-    private data class CachedListing(val directory: Entry, val path: String?, val entries: List<Entry>, val readAt: Long, val closedToApps: Boolean)
+    private data class CachedListing(val directory: Entry, val path: String?, val folderKey: String?,
+        val entries: List<Entry>, val readAt: Long, val closedToApps: Boolean)
 
-    private fun cacheListing(ref: NodeRef, directory: Entry, path: String?, entries: List<Entry>, closedToApps: Boolean) {
-        synchronized(listings) { listings[ref] = CachedListing(directory, path, entries, System.nanoTime(), closedToApps) }
+    private fun cacheListing(ref: NodeRef, directory: Entry, path: String?, folderKey: String?, entries: List<Entry>, closedToApps: Boolean) {
+        synchronized(listings) { listings[ref] = CachedListing(directory, path, folderKey, entries, System.nanoTime(), closedToApps) }
     }
 
     private fun cachedListing(ref: NodeRef): CachedListing? = synchronized(listings) { listings[ref] }
@@ -810,24 +809,21 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
         val cached = if (force) null else cachedListing(ref)
         if (cached != null) {
             allEntries = cached.entries
+            _state.update { it.copy(view = folderView(it, ref).copy(directory = cached.directory,
+                path = cached.path, folderKey = cached.folderKey, closedToApps = cached.closedToApps)) }
             viewModelScope.launch {
-                val preferences = _state.value.preferences
-                val (sorted, runs) = withContext(Dispatchers.Default) {
-                    val ordered = sortEntries(cached.entries, preferences, _state.value.filter, _state.value.extensions)
-                    ordered to sectionsFor(ordered, preferences, _state.value.view)
-                }
+                val (sorted, runs) = orderedRows(cached.entries) {
+                    token == generation && allEntries === cached.entries
+                } ?: return@launch
+                if (token != generation) return@launch
                 val reveal = pendingReveal?.takeIf { want -> sorted.any { it.ref == want } }
                 if (reveal != null) pendingReveal = null
-                if (token == generation) {
-                    _state.update {
-                        it.copy(view = View.Folder(ref, cached.directory, cached.path,
-                                folderKey = cached.path ?: (it.view as? View.Folder)?.folderKey, listingRef = ref,
-                                listingLocation = location, closedToApps = cached.closedToApps),
-                            entries = sorted, sections = runs, loading = false, error = null, errorReason = null,
-                            selected = reveal?.let { want -> setOf(want) }
-                                ?: if (preserveSelection) it.selected else emptySet(),
-                            searching = false, extensions = emptySet())
-                    }
+                _state.update {
+                    it.copy(view = folderView(it, ref).copy(listingRef = ref, listingLocation = location),
+                        entries = sorted, sections = runs, loading = false, error = null, errorReason = null,
+                        selected = reveal?.let { want -> setOf(want) }
+                            ?: if (preserveSelection) it.selected else emptySet(),
+                        searching = false, extensions = emptySet())
                 }
             }
             if (System.nanoTime() - cached.readAt < LISTING_FRESH_NANOS) {
@@ -879,7 +875,7 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
                 }
                 val unchanged = cached != null && sameListing(cached.entries, accumulated)
                 if (!unchanged || !published) publishEntries(accumulated, location, token)
-                cacheListing(ref, folder, path, accumulated.toList(), closed)
+                cacheListing(ref, folder, path, key, accumulated.toList(), closed)
                 DebugLog.i(BROWSE) { "Listed $where: ${accumulated.size} items in ${DebugLog.millisSince(started)} ms" }
                 if (token == generation) _state.update { it.copy(loading = false, refreshing = false) }
             } catch (cancelled: CancellationException) {
@@ -910,14 +906,11 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     private suspend fun publishEntries(entries: List<Entry>, location: Location, token: Long) {
         if (token != generation) return
         allEntries = entries.toList()
-        val preferences = _state.value.preferences
-        val (visible, runs) = withContext(Dispatchers.Default) {
-            val ordered = sortEntries(allEntries, preferences, _state.value.filter, _state.value.extensions)
-            ordered to sectionsFor(ordered, preferences, _state.value.view)
-        }
+        val (visible, runs) = orderedRows(allEntries) { token == generation } ?: return
+        if (token != generation) return
         val reveal = pendingReveal?.takeIf { want -> visible.any { it.ref == want } }
         if (reveal != null) pendingReveal = null
-        if (token == generation && _state.value.preferences == preferences) _state.update {
+        _state.update {
             it.copy(entries = visible, sections = runs,
                 view = (it.view as? View.Folder)?.copy(listingRef = location.ref, listingLocation = location) ?: it.view,
                 selected = reveal?.let { ref -> setOf(ref) } ?: it.selected.keptIn(visible))
@@ -927,8 +920,8 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     private fun Set<NodeRef>.keptIn(entries: List<Entry>): Set<NodeRef> =
         if (isEmpty()) this else intersect(entries.mapTo(HashSet(entries.size * 2)) { it.ref })
 
-    private fun sortEntries(entries: List<Entry>, preferences: Preferences, filterText: String, extensions: Set<String>): List<Entry> {
-        val p = preferences.inFolder(_state.value.folderViews[_state.value.folderKey])
+    private fun sortEntries(entries: List<Entry>, state: BrowserState): List<Entry> {
+        val p = state.preferences.inFolder(state.folderViews[state.folderKey])
         val comparator = when (p.sort) {
             SortOrder.NAME -> compareBy<Entry, String>(String.CASE_INSENSITIVE_ORDER) { it.name }
             SortOrder.SIZE -> compareBy<Entry> { it.size ?: -1L }
@@ -939,11 +932,11 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
             }
             SortOrder.NATURAL -> NaturalOrder
         }.thenBy { it.name }.let { if (p.descending) it.reversed() else it }
-        val filter = filterText.trim()
+        val filter = state.filter.trim()
         return entries.asSequence()
             .filter { p.showHidden || !it.hidden }
             .filter { filter.isEmpty() || it.name.contains(filter, ignoreCase = true) }
-            .filter { extensions.isEmpty() || it.name.substringAfterLast('.', "").lowercase() in extensions }
+            .filter { state.extensions.isEmpty() || it.name.substringAfterLast('.', "").lowercase() in state.extensions }
             .sortedWith(compareByDescending<Entry> { it.directory }.then(comparator)).toList()
     }
 
@@ -970,12 +963,11 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     private fun resort() {
         val token = generation
         val mine = ++resortToken
+        val entries = allEntries
         viewModelScope.launch {
-            val state = _state.value
-            val (sorted, runs) = withContext(Dispatchers.Default) {
-                val ordered = sortEntries(allEntries, state.preferences, state.filter, state.extensions)
-                ordered to sectionsFor(ordered, state.preferences, state.view)
-            }
+            val (sorted, runs) = orderedRows(entries) {
+                token == generation && mine == resortToken && allEntries === entries
+            } ?: return@launch
             if (token == generation && mine == resortToken) _state.update {
                 it.copy(entries = sorted, sections = runs, selected = it.selected.keptIn(sorted))
             }
@@ -983,13 +975,36 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     }
 
     /** Category results keep the media index's DATE_MODIFIED DESC order, so they are always sectioned by date. */
-    private fun sectionsFor(entries: List<Entry>, preferences: Preferences, view: View?): List<SectionRun> {
-        val own = preferences.inFolder(_state.value.folderViews[_state.value.folderKey])
+    private fun sectionsFor(entries: List<Entry>, state: BrowserState): List<SectionRun> {
+        val own = state.preferences.inFolder(state.folderViews[state.folderKey])
         if (!own.sections || entries.isEmpty()) return emptyList()
-        return sectionsOf(entries, if (view is View.Category) SortOrder.MODIFIED else own.sort)
+        return sectionsOf(entries, if (state.view is View.Category) SortOrder.MODIFIED else own.sort)
     }
 
     private fun Preferences.sortKey() = listOf(sort, descending, showHidden, sections)
+
+    private suspend fun orderedRows(
+        entries: List<Entry>,
+        presorted: Boolean = false,
+        current: () -> Boolean,
+    ): Pair<List<Entry>, List<SectionRun>>? {
+        while (current()) {
+            val state = _state.value
+            val ordered = withContext(Dispatchers.Default) {
+                val rows = if (presorted) entries else sortEntries(entries, state)
+                rows to sectionsFor(rows, state)
+            }
+            if (!current()) return null
+            if (sameOrdering(state)) return ordered
+        }
+        return null
+    }
+
+    private fun sameOrdering(before: BrowserState): Boolean = _state.value.let { now ->
+        before.preferences.inFolder(before.folderViews[before.folderKey]).sortKey() ==
+            now.preferences.inFolder(now.folderViews[now.folderKey]).sortKey() &&
+            before.filter == now.filter && before.extensions == now.extensions
+    }
 
     fun setViewOptions(updated: Preferences, thisFolderOnly: Boolean) {
         val key = _state.value.folderKey
@@ -1112,6 +1127,14 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
     }
 
     fun invertSelection() { _state.update { it.copy(selected = it.entries.map { e -> e.ref }.toSet() - it.selected) } }
+    fun fillSelection() {
+        _state.update { state ->
+            val first = state.entries.indexOfFirst { it.ref in state.selected }
+            val last = state.entries.indexOfLast { it.ref in state.selected }
+            if (first < 0 || first == last) state
+            else state.copy(selected = state.selected + state.entries.subList(first, last + 1).map { it.ref })
+        }
+    }
     fun clearSelection() { _state.update { it.copy(selected = emptySet()) } }
 
     private var deleteJob: Job? = null
@@ -1459,6 +1482,33 @@ class BrowserViewModel(application: Application, private val graph: AppGraph) : 
                 },
             )
         }
+    }
+
+    internal fun terminalNeedsCredentials(ref: NodeRef): Boolean =
+        (graph.providers.provider(ref) as? ShellAddressable)?.supportsShell == true
+
+    internal fun canOpenTerminalHere(): Boolean {
+        val ref = _state.value.directory?.ref ?: return false
+        val provider = graph.providers.provider(ref)
+        return (provider as? ShellAddressable)?.supportsShell == true ||
+            (provider as? PathAddressable)?.pathOf(ref) != null
+    }
+
+    internal suspend fun terminalContext(request: Overlay.Terminal): TerminalContext? = withContext(Dispatchers.IO) {
+        val ref = request.directory ?: return@withContext null
+        val provider = graph.providers.provider(ref)
+        val shell = (provider as? ShellAddressable)?.shellLocation(ref)
+        val path = shell?.path ?: (provider as? PathAddressable)?.pathOf(ref)
+            ?: error("No shell path for this folder")
+        val paths = request.entries.map { entry ->
+            require(entry.ref.provider == ref.provider) { "Files belong to another storage" }
+            if (shell != null) {
+                val location = (provider as ShellAddressable).shellLocation(entry.ref)
+                require(location?.accountId == shell.accountId) { "Files belong to another server" }
+                requireNotNull(location).path
+            } else (provider as? PathAddressable)?.pathOf(entry.ref) ?: error("No shell path for this file")
+        }
+        TerminalContext(shell?.accountId, path, paths)
     }
 
     fun currentFolderPath(): String = _state.value.directoryPath.orEmpty()

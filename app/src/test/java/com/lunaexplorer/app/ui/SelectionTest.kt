@@ -67,4 +67,41 @@ class SelectionTest {
         viewModel.back()
         assertEquals("Back belongs to the screen the file was found on", Screen.STORAGE, state.screen)
     }
+
+    @Test fun `fill adds the rows between the outermost selected items in display order`() {
+        listed()
+        viewModel.setPreferences(state.preferences.copy(descending = true))
+        assertTrue(harness.awaitUntil { state.entries.first().name == "other" })
+        val rows = state.entries
+        viewModel.toggleSelection(rows[2].ref)
+        viewModel.toggleSelection(rows[0].ref)
+
+        viewModel.fillSelection()
+
+        assertEquals(rows.take(3).map { it.ref }.toSet(), state.selected)
+    }
+
+    @Test fun `fill leaves an empty or single selection alone`() {
+        listed()
+        viewModel.fillSelection()
+        assertTrue(state.selected.isEmpty())
+
+        val ref = state.entries[1].ref
+        viewModel.toggleSelection(ref)
+        viewModel.fillSelection()
+        assertEquals(setOf(ref), state.selected)
+    }
+
+    @Test fun `fill only adds rows in the filtered listing`() {
+        listed()
+        viewModel.setFilter("o")
+        assertTrue(harness.awaitUntil { state.entries.size == 3 })
+        val rows = state.entries
+        viewModel.toggleSelection(rows.first().ref)
+        viewModel.toggleSelection(rows.last().ref)
+
+        viewModel.fillSelection()
+
+        assertEquals(rows.map { it.ref }.toSet(), state.selected)
+    }
 }

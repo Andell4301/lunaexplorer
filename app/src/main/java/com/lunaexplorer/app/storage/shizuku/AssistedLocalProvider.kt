@@ -10,6 +10,7 @@ import com.lunaexplorer.core.RootKind
 import com.lunaexplorer.core.StorageException
 import com.lunaexplorer.core.StorageProvider
 import com.lunaexplorer.core.StorageRoot
+import com.lunaexplorer.core.validateName
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
@@ -51,6 +52,11 @@ internal class AssistedLocalProvider(
     override fun shownPathOf(ref: NodeRef): String? = direct.shownPathOf(ref)
 
     override suspend fun stat(ref: NodeRef): Entry = assisting(ref)?.stat(ref) ?: direct.stat(ref)
+
+    override suspend fun child(parent: NodeRef, name: String): Entry? {
+        validateName(name)
+        return if (assisting(parent) == null) direct.child(parent, name) else super<StorageProvider>.child(parent, name)
+    }
 
     override fun list(parent: NodeRef, complete: Boolean): Flow<List<Entry>> = flow {
         val assisted = assisting(parent)

@@ -50,7 +50,7 @@ class ExtractDestinationTest {
     @Test fun `an archive can be carried and put down in another folder`() {
         val archive = archived()
 
-        viewModel.operations.carryExtract(archive, ExtractPlan(intoFolder = "unpacked"))
+        viewModel.operations.carryExtract(archive, ExtractPlan(intoFolder = "unpacked", deleteAfter = true, keepBoth = true))
         val carried = requireNotNull(state.clipboard)
         assertNotNull("It is carried as an extraction, not a copy", carried.extract)
         assertEquals(listOf("bundle.zip"), carried.entries.map { it.name })
@@ -64,6 +64,10 @@ class ExtractDestinationTest {
         viewModel.operations.paste()
         assertTrue("The unpacking is queued against the folder that was chosen",
             harness.awaitUntil { state.operations.any { it.title == "Extract bundle.zip to elsewhere" } })
+        val id = state.operations.single { it.title == "Extract bundle.zip to elsewhere" }.id
+        val stored = runBlocking { requireNotNull(harness.graph.database.request(id)) }
+        assertTrue(stored.deleteAfterArchive)
+        assertTrue(stored.archiveKeepBoth)
         assertNull("An archive is unpacked once, so it is not still being carried", state.clipboard)
     }
 

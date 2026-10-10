@@ -6,6 +6,8 @@ Bug reports, focused fixes and improvements are welcome. For substantial changes
 
 Follow the [build instructions](README.md#build) and use the checked-in Gradle wrapper. Dependencies and toolchain versions are pinned in the Gradle files. Keep local SDK paths, credentials, signing keys and generated files out of version control.
 
+The local terminal builds a small PTY library with NDK 30.0.16248370 and CMake 3.22.1. Install both through the SDK manager.
+
 The app targets Java 17 bytecode. The `app` module uses Android Gradle Plugin's built-in Kotlin support; the `core` module uses the Kotlin JVM plugin.
 
 ## Code changes
@@ -35,6 +37,16 @@ Before submitting a change, run the complete verification:
 ```
 
 The root `check` task runs source hygiene, core JVM tests, Android JVM tests and Android lint. Release assembly additionally checks that R8 preserves required reflective constructors, SMB event handlers and the B2 SDK's JSON structures. `assembleDebugAndroidTest` compiles device tests; it does not execute them.
+
+On Linux, the local PTY also has native host tests:
+
+```sh
+cmake -S app/src/main/cpp -B /tmp/luna-pty-tests
+cmake --build /tmp/luna-pty-tests
+ctest --test-dir /tmp/luna-pty-tests --output-on-failure
+```
+
+These exercise the PTY lifecycle on Linux; the Android instrumentation test covers the JNI boundary on a device.
 
 With an emulator or device connected:
 
@@ -132,9 +144,9 @@ The workflow creates a **draft** GitHub Release with these assets, using the APK
 - `LunaExplorer-1.0.0-mapping.txt` — R8 mapping for crash reports.
 - `LunaExplorer-1.0.0-signing-certificate.txt` — signature verification and certificate fingerprints from `apksigner verify --verbose --print-certs`.
 
-Review the draft's notes and assets, test the APK on a device, and provide the [corresponding source instructions](#licensing) before publishing it in GitHub. The workflow does not overwrite an existing draft or published release.
+Review the draft's notes and assets, test the APK on a device, and provide the [corresponding source instructions](#licensing) before publishing it in GitHub. Ordinary runs do not overwrite an existing draft or published release. Deliberately force-updating a release tag rebuilds and replaces its assets while preserving its notes and publication status.
 
-If a run fails before creating the draft, rerun it after fixing the failure. If asset upload fails after draft creation, download the `signed-release-v<versionName>` workflow artifact and finish uploading its files to the draft manually. Alternatively, delete only the unfinished draft, keep its tag, and rerun the workflow. Do not replace assets on a published release.
+If a run fails before creating the draft, rerun it after fixing the failure. If asset upload fails after draft creation, download the `signed-release-v<versionName>` workflow artifact and finish uploading its files to the draft manually. Alternatively, delete only the unfinished draft, keep its tag, and rerun the workflow. Prefer a new version for changes to a published release; replace its assets only when deliberately rebuilding the same release.
 
 ## Licensing
 

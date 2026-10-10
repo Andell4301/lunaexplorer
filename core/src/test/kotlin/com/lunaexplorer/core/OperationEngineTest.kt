@@ -484,6 +484,29 @@ class OperationEngineTest {
         assertFalse(storage.hasStages())
     }
 
+    @Test fun `a merge rechecks destination access before removing an empty source`() = runBlocking {
+        val source = storage.folder(sourceFolder, "notes")
+        val target = storage.folder(destination, "notes")
+        val kept = storage.file(target, "keep.txt", "keep")
+        val restricted = object : StorageProvider by storage {
+            override suspend fun stat(ref: NodeRef): Entry = storage.stat(ref).let {
+                if (ref == target) it.copy(capabilities = it.capabilities - Capability.CREATE) else it
+            }
+        }
+        val events = mutableListOf<OperationEvent>()
+        val result = OperationEngine(ProviderRegistry(listOf(restricted)))
+            .run(request(source, OperationType.MOVE, ConflictPolicy.MERGE)) { events += it }
+
+        val outcome = result.outcomes.single()
+        assertEquals(ItemStatus.FAILED, outcome.status)
+        assertEquals(StorageError.UNSUPPORTED, outcome.error)
+        assertTrue(storage.exists(source))
+        assertEquals("keep", storage.text(kept))
+        assertTrue(storage.deleted.isEmpty())
+        assertTrue(events.none { it is OperationEvent.Journal })
+        assertFalse(storage.hasStages())
+    }
+
     @Test fun mergingMovePreflightsTheWholeTreeBeforeMovingAnything() = runBlocking {
         val source = storage.folder(sourceFolder, "notes")
         val movable = storage.file(source, "movable.txt", "movable")

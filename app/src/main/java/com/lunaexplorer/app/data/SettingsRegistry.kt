@@ -13,7 +13,7 @@ object SettingsRegistry {
 
     val pages: List<String> = listOf(
         "Appearance", "Where Luna opens", "Files and folders", "Media categories",
-        "Video player", "Audio player", "Subtitles",
+        "Video player", "Audio player", "Subtitles", "Terminal",
         "Deleting", "Storage access", "Open with Luna", "Document provider", "Network",
         "Bookmarks", "Stored procedures", "Default apps", "Debug log",
     )
@@ -119,6 +119,12 @@ object SettingsRegistry {
         add(flag("audio.background", "Audio player", "Background play",
             { it.audioBackground }, { p, v -> p.copy(audioBackground = v) },
             claims = setOf("audioBackground")))
+        add(flag("terminal.disableSuggestions", "Terminal", "Disable keyboard suggestions",
+            { it.terminalDisableSuggestions }, { p, v -> p.copy(terminalDisableSuggestions = v) },
+            claims = setOf("terminalDisableSuggestions")))
+        add(flag("terminal.tapOpensKeyboard", "Terminal", "Tap to open keyboard",
+            { it.terminalTapOpensKeyboard }, { p, v -> p.copy(terminalTapOpensKeyboard = v) },
+            claims = setOf("terminalTapOpensKeyboard")))
         add(choice("subtitles.position", "Subtitles", "Position", SubtitlePosition.entries,
             { it.subtitleAppearance.position }, { p, v -> p.subtitles { it.copy(position = v) } }))
         add(int("subtitles.verticalMarginPercent", "Subtitles", "Vertical margin", 0..30,

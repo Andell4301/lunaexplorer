@@ -23,12 +23,13 @@ internal enum class NetworkKind(val id: String, val title: String) {
     SMB("smb", "SMB"),
     B2("b2", "Backblaze B2"),
     FTP("ftp", "FTP"),
-    SFTP("sftp", "SFTP");
+    SFTP("sftp", "SFTP"),
+    SSH("ssh", "SSH");
 
     fun summary(state: BrowserState): String = when (this) {
         SMB -> when (val servers = state.smbAccounts.size) { 0 -> "No servers"; 1 -> "One server"; else -> "$servers servers" }
         B2 -> when (val accounts = state.b2Accounts.size) { 0 -> "No accounts"; 1 -> "One account"; else -> "$accounts accounts" }
-        FTP, SFTP -> when (val servers = state.transferAccounts.count {
+        FTP, SFTP, SSH -> when (val servers = state.transferAccounts.count {
             it.protocol == if (this == FTP) TransferProtocol.FTP else TransferProtocol.SFTP
         }) { 0 -> "No servers"; 1 -> "One server"; else -> "$servers servers" }
     }
@@ -141,17 +142,18 @@ internal fun TransferSettings(
     onChange: (Preferences) -> Unit,
     onEdit: (TransferAccount, Boolean) -> Unit,
 ) {
-    val protocol = if (kind == NetworkKind.SFTP) TransferProtocol.SFTP else TransferProtocol.FTP
+    val protocol = if (kind == NetworkKind.FTP) TransferProtocol.FTP else TransferProtocol.SFTP
     SectionHeading("Servers")
     state.transferAccounts.filter { it.protocol == protocol }.forEach { account ->
-        SettingsLink(account.name.ifEmpty { account.host }, "${account.host}:${account.port}${account.rootPath}") { onEdit(account, false) }
+        SettingsLink(account.name.ifEmpty { account.host }, if (kind == NetworkKind.SSH)
+            "${account.username}@${account.host}:${account.port}" else "${account.host}:${account.port}${account.rootPath}") { onEdit(account, false) }
     }
     Spacer(Modifier.height(6.dp))
     OutlinedButton(onClick = {
         onEdit(TransferAccount(name = "", host = "", protocol = protocol,
             port = if (protocol == TransferProtocol.SFTP) 22 else 21), true)
     }) { Text("Add an ${kind.title} server") }
-    ThumbnailsOn(kind, state.preferences, onChange)
+    if (kind != NetworkKind.SSH) ThumbnailsOn(kind, state.preferences, onChange)
 }
 
 @Composable

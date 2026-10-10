@@ -30,6 +30,8 @@ data class OperationRequest(
     val procedureId: String? = null,
     val notifyOnSuccess: Boolean = false,
     val notifyOnFailure: Boolean = false,
+    val deleteAfterArchive: Boolean = false,
+    val archiveKeepBoth: Boolean = false,
 )
 
 data class ItemOutcome(
@@ -186,6 +188,7 @@ class OperationEngine(
         private var staged: NodeRef? = null
         /** The archive engine's staging file. It deletes it itself; tracked only to report a leftover. */
         private var archiveStaging: NodeRef? = null
+        private var verifyArchiveOutput: (suspend () -> Unit)? = null
         /** Set when [staged] was created directly under its final name because the destination cannot rename. */
         private var inPlaceName: String? = null
         var published: NodeRef? = null
@@ -227,7 +230,7 @@ class OperationEngine(
             if (existing != null && existing.directory && original.directory && mergesDirectories()) {
                 // Check source deletability before a merge move can leave the tree partially moved.
                 if (request.type == OperationType.MOVE) requireDeletableTree(origin, original, mutableSetOf())
-                return mergeInto(origin, original, target, existing)
+                return mergeInto(origin, original, target, existing.ref)
             }
             val finalName = resolveName(target, parent, wantedName, existing, original.directory) ?: return skipped(ref)
             val replace = if (existing != null && finalName == wantedName) existing else null
@@ -328,9 +331,10 @@ class OperationEngine(
             request.conflictPolicy == ConflictPolicy.MERGE || request.conflictPolicy == ConflictPolicy.REPLACE
 
         // Merge children independently; remove the source folder only after every child moved.
-        private suspend fun mergeInto(origin: StorageProvider, original: Entry, target: StorageProvider, destination: Entry): ItemOutcome {
+        private suspend fun mergeInto(origin: StorageProvider, original: Entry, target: StorageProvider, destinationRef: NodeRef): ItemOutcome {
             if (depth > 128) throw StorageException(StorageError.UNSUPPORTED, "Folder tree is too deeply nested to merge")
             requireCapability(original, Capability.LIST)
+            val destination = target.stat(destinationRef)
             requireDirectory(destination)
             requireCapability(destination, Capability.CREATE)
             // Ref equality is not enough: the same directory can be reached under two roots or through a link.
@@ -450,9 +454,10 @@ class OperationEngine(
             }
         }
 
-        private suspend fun validateSourceTree(origin: StorageProvider, verifyContent: Boolean) {
+        private suspend fun validateSourceTree(provider: StorageProvider? = null, verifyContent: Boolean) {
             for (snapshot in manifest) {
                 currentCoroutineContext().ensureActive()
+                val origin = provider ?: registry.provider(snapshot.entry.ref)
                 val current = origin.stat(snapshot.entry.ref)
                 if (current.directory != snapshot.entry.directory || current.name != snapshot.entry.name ||
                     current.size != snapshot.entry.size || current.modified != snapshot.entry.modified) {
@@ -473,10 +478,11 @@ class OperationEngine(
             }
         }
 
-        private suspend fun deleteMovedTree(origin: StorageProvider) {
+        private suspend fun deleteMovedTree(provider: StorageProvider? = null) {
             // The manifest lists parents before children; reversed, each directory is empty when deleted.
             for (snapshot in manifest.asReversed()) {
                 currentCoroutineContext().ensureActive()
+                val origin = provider ?: registry.provider(snapshot.entry.ref)
                 val current = try { origin.stat(snapshot.entry.ref) } catch (gone: StorageException) {
                     // A prefix folder goes with its last child, which was just removed.
                     if (snapshot.entry.directory && gone.reason == StorageError.NOT_FOUND) continue
@@ -491,8 +497,10 @@ class OperationEngine(
                 emit(OperationEvent.Journal(request.id, JournalPhase.DELETING_SOURCE, current.ref, published,
                     request.destination, "Removing verified source ${current.name}"))
                 origin.delete(current.ref)
-                if (current.ref != source) emit(OperationEvent.ItemFinished(request.id,
-                    ItemOutcome(current.ref, published, ItemStatus.SUCCESS, "Removed source ${current.name} after verified move")))
+                if (current.ref != source || request.deleteAfterArchive) emit(OperationEvent.ItemFinished(request.id,
+                    ItemOutcome(current.ref, if (request.deleteAfterArchive) null else published, ItemStatus.SUCCESS,
+                        if (request.deleteAfterArchive) "Removed archived source ${current.name}"
+                        else "Removed source ${current.name} after verified move")))
             }
         }
 
@@ -626,7 +634,33 @@ class OperationEngine(
             if (target.child(parent, name) != null) {
                 throw StorageException(StorageError.CONFLICT, "An item named $name already exists here")
             }
-            archives.create(request.sources, parent, name, spec.options(password)).collect { step -> archive(step) }
+            if (request.deleteAfterArchive) {
+                for (ref in request.sources.distinct()) {
+                    val origin = registry.provider(ref)
+                    val item = origin.stat(ref)
+                    if (item.directory && parent.provider == ref.provider && origin.isDescendant(parent, ref)) {
+                        throw StorageException(StorageError.UNSUPPORTED, "An archive cannot be created inside a source folder being deleted")
+                    }
+                    snapshotArchiveSource(item)
+                }
+            }
+            val expectedSources = manifest.associateBy { it.entry.ref }
+            val archivedSources = mutableSetOf<NodeRef>()
+            val onSource: (suspend (Entry, ByteArray?) -> Unit)? = if (!request.deleteAfterArchive) null else { entry, digest ->
+                val expected = expectedSources[entry.ref]
+                if (expected == null || expected.entry.name != entry.name || expected.entry.directory != entry.directory ||
+                    (expected.hash != null && (digest == null || !expected.hash.digest.contentEquals(digest)))) {
+                    throw StorageException(StorageError.IO, "${entry.name} changed while archiving; source retained")
+                }
+                archivedSources += entry.ref
+            }
+            archives.create(request.sources, parent, name, spec.options(password), verify = request.deleteAfterArchive,
+                onSource = onSource, onVerification = { verifyArchiveOutput = it })
+                .collect { step -> archive(step) }
+            if (request.deleteAfterArchive && archivedSources != expectedSources.keys) {
+                throw StorageException(StorageError.IO, "Some sources were not archived; source retained")
+            }
+            removeArchiveSources()
             return ItemOutcome(null, published, ItemStatus.SUCCESS, "Created $name")
         }
 
@@ -641,8 +675,42 @@ class OperationEngine(
             requireDirectory(folder)
             requireCapability(folder, Capability.CREATE)
             val item = registry.provider(ref).stat(ref)
-            archives.extract(ref, parent, request.name, password).collect { step -> archive(step) }
+            if (request.deleteAfterArchive) snapshotArchiveSource(item)
+            archives.extract(ref, parent, request.name, password, verify = request.deleteAfterArchive,
+                onVerification = { verifyArchiveOutput = it }, sourceDigest = manifest.singleOrNull()?.hash?.digest,
+                keepBoth = request.archiveKeepBoth)
+                .collect { step -> archive(step) }
+            removeArchiveSources()
             return ItemOutcome(ref, published, ItemStatus.SUCCESS, "Extracted ${item.name}")
+        }
+
+        private suspend fun snapshotArchiveSource(entry: Entry, depth: Int = 0) {
+            currentCoroutineContext().ensureActive()
+            if (depth > 128 || !visited.add(entry.ref)) {
+                throw StorageException(StorageError.UNSUPPORTED, "Cyclic or overlapping archive sources")
+            }
+            requireCapability(entry, Capability.DELETE)
+            if (entry.link) throw StorageException(StorageError.UNSUPPORTED, "Symbolic links cannot be archived and deleted")
+            val provider = registry.provider(entry.ref)
+            if (entry.directory) {
+                requireCapability(entry, Capability.LIST)
+                val children = mutableListOf<Entry>()
+                provider.list(entry.ref, complete = true).collect { children.addAll(it) }
+                manifest += Snapshot(entry, null, children.mapTo(mutableListOf()) { it.ref })
+                for (child in children) snapshotArchiveSource(child, depth + 1)
+            } else {
+                manifest += Snapshot(entry, hash(provider, entry.ref), null)
+            }
+        }
+
+        private fun removeArchiveSources() {
+            if (!request.deleteAfterArchive) return
+            // Even ordinary destinations may have pending writes through another provider.
+            removeAfterFlush += {
+                validateSourceTree(verifyContent = true)
+                requireNotNull(verifyArchiveOutput).invoke()
+                removing { deleteMovedTree() }
+            }
         }
 
         private suspend fun archive(step: ArchiveProgress) {

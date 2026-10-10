@@ -20,6 +20,100 @@ import org.junit.rules.TemporaryFolder
 class LocalStorageProviderTest {
     @get:Rule val temporary = TemporaryFolder()
 
+    @Test fun `child lookup keeps distinct case-sensitive names and exact hardlink names`() = runTest {
+        val folder = temporary.newFolder()
+        folder.resolve("3H.xml").writeText("upper")
+        folder.resolve("3h.xml").writeText("lower")
+        Files.createLink(folder.resolve("3H.XML").toPath(), folder.resolve("3H.xml").toPath())
+        val provider = LocalStorageProvider(confined("workspace", folder))
+        val root = provider.root("workspace")
+
+        for ((name, content) in mapOf("3H.xml" to "upper", "3h.xml" to "lower", "3H.XML" to "upper")) {
+            val child = requireNotNull(provider.child(root, name))
+            assertEquals(name, child.name)
+            assertEquals(provider.referenceTo(folder.resolve(name).absolutePath), child.ref)
+            assertEquals(content, provider.openRead(child.ref).bufferedReader().use { it.readText() })
+        }
+        assertNull(provider.child(root, "3h.XML"))
+    }
+
+    @Test fun `child lookup retains followed and dangling links instead of naming their targets`() = runTest {
+        val folder = temporary.newFolder()
+        folder.resolve("original.txt").writeText("original")
+        Files.createSymbolicLink(folder.resolve("shortcut").toPath(), folder.resolve("original.txt").toPath())
+        Files.createSymbolicLink(folder.resolve("dangling").toPath(), folder.resolve("missing").toPath())
+        val provider = LocalStorageProvider(listOf(LocalRoot("primary", "Internal storage", folder, followLinks = true)))
+        val root = provider.root("primary")
+
+        val shortcut = requireNotNull(provider.child(root, "shortcut"))
+        assertEquals("shortcut", shortcut.name)
+        assertEquals(provider.referenceTo(folder.resolve("shortcut").absolutePath), shortcut.ref)
+        assertTrue(shortcut.link)
+        assertFalse(Capability.DELETE in shortcut.capabilities)
+        val dangling = requireNotNull(provider.child(root, "dangling"))
+        assertEquals("dangling", dangling.name)
+        assertEquals("inode/symlink", dangling.mimeType)
+        assertTrue(dangling.capabilities.isEmpty())
+    }
+
+    @Test fun `child lookup validates a name before resolving it`() = runTest {
+        val folder = temporary.newFolder()
+        val provider = LocalStorageProvider(confined("workspace", folder))
+        val root = provider.root("workspace")
+
+        for (name in listOf("..", "../outside", "nested/file")) {
+            expectStorageError(StorageError.INVALID_NAME) { provider.child(root, name) }
+        }
+    }
+
+    @Test fun `native absence is known even when a listing fails part way`() = runTest {
+        val folder = temporary.newFolder()
+        repeat(5) { folder.resolve("f$it.txt").writeText("x") }
+        val provider = LocalStorageProvider(confined("workspace", folder), openDirectory = failingAfter(3))
+        val root = provider.root("workspace")
+
+        assertNull(provider.child(root, "missing.txt"))
+        expectStorageError(StorageError.IO) { provider.child(root, "f4.txt") }
+    }
+
+    @Test fun `resolving a local folder collision merges existing and nested folders`() = runTest {
+        for (type in listOf(OperationType.COPY, OperationType.MOVE)) {
+            val workspace = temporary.newFolder()
+            val source = workspace.resolve("media/Pictures/Screenshots").apply { mkdirs() }
+            val destination = workspace.resolve("media/Screenshots").apply { mkdirs() }
+            source.resolve("added.png").writeText("new screenshot")
+            source.resolve("nested").mkdir()
+            source.resolve("nested/added.png").writeText("new nested screenshot")
+            destination.resolve("kept.png").writeText("existing screenshot")
+            destination.resolve("nested").mkdir()
+            destination.resolve("nested/kept.png").writeText("existing nested screenshot")
+            val provider = LocalStorageProvider(confined("primary", workspace))
+            val engine = OperationEngine(ProviderRegistry(listOf(provider)))
+            val request = OperationRequest(type = type,
+                sources = listOf(requireNotNull(provider.referenceTo(source.absolutePath))),
+                destination = requireNotNull(provider.referenceTo(requireNotNull(destination.parentFile).absolutePath)))
+
+            val conflict = engine.run(request)
+
+            assertEquals(ItemStatus.CONFLICT, conflict.outcomes.single().status)
+            assertEquals("new screenshot", source.resolve("added.png").readText())
+            assertFalse(destination.resolve("added.png").exists())
+
+            val merged = engine.run(request.copy(conflictPolicy = ConflictPolicy.MERGE))
+
+            assertTrue(merged.outcomes.toString(), merged.successful)
+            assertEquals("new screenshot", destination.resolve("added.png").readText())
+            assertEquals("new nested screenshot", destination.resolve("nested/added.png").readText())
+            assertEquals("existing screenshot", destination.resolve("kept.png").readText())
+            assertEquals("existing nested screenshot", destination.resolve("nested/kept.png").readText())
+            if (type == OperationType.MOVE) assertFalse(source.exists()) else {
+                assertEquals("new screenshot", source.resolve("added.png").readText())
+                assertEquals("new nested screenshot", source.resolve("nested/added.png").readText())
+            }
+            assertFalse(workspace.walkTopDown().any { it.name.startsWith(".luna-") })
+        }
+    }
+
     @Test fun `commit preserves a target edited without changing its inode`() = runTest {
         for (replacement in listOf("a different size", "new")) {
             val folder = temporary.newFolder()
@@ -86,6 +180,10 @@ class LocalStorageProviderTest {
         assertEquals("escape", unsupported.name)
         assertEquals("inode/symlink", unsupported.mimeType)
         assertTrue(unsupported.capabilities.isEmpty())
+        val child = requireNotNull(provider.child(root, "escape"))
+        assertEquals(unsupported.ref, child.ref)
+        assertEquals("inode/symlink", child.mimeType)
+        assertTrue(child.capabilities.isEmpty())
         assertEquals("secret", outside.resolve("private").readText())
     }
 

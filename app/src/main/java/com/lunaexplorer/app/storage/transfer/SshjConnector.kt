@@ -43,39 +43,11 @@ import java.util.EnumSet
 import java.util.concurrent.TimeoutException
 
 class SshjConnector internal constructor(private val newClient: () -> SSHClient) : TransferConnector {
-    constructor() : this({
-        configureSshCrypto()
-        SSHClient()
-    })
+    constructor() : this(::newSshClient)
 
     override fun connect(account: TransferAccount, credentials: TransferCredentials): TransferClient = sshFailure {
-        val ssh = newClient()
-        val verifier = SshHostVerifier(account.hostKeyFingerprint)
+        val ssh = authenticatedSsh(account, credentials, newClient)
         try {
-            ssh.connectTimeout = account.timeoutSeconds * 1_000
-            ssh.timeout = account.timeoutSeconds * 1_000
-            ssh.addHostKeyVerifier(verifier)
-            try {
-                ssh.connect(account.host, account.port)
-            } catch (error: Exception) {
-                if (error is CancellationException) throw error
-                verifier.required?.let { throw it }
-                throw error
-            }
-            if (account.authentication == TransferAuthentication.PRIVATE_KEY) {
-                val key = try {
-                    ssh.loadKeys(decryptPkcs8(credentials), null, object : PasswordFinder {
-                        override fun reqPassword(resource: Resource<*>): CharArray = credentials.passphrase.toCharArray()
-                        override fun shouldRetry(resource: Resource<*>): Boolean = false
-                    }).also { it.private }
-                } catch (error: Exception) {
-                    if (error is CancellationException) throw error
-                    throw StorageException(StorageError.AUTH, "The private key could not be opened")
-                }
-                ssh.authPublickey(account.username, key)
-            } else {
-                ssh.authPassword(account.username, credentials.password.toCharArray())
-            }
             val sftp = ssh.newSFTPClient()
             try {
                 sftp.sftpEngine.timeoutMs = account.timeoutSeconds * 1_000
@@ -93,19 +65,63 @@ class SshjConnector internal constructor(private val newClient: () -> SSHClient)
             throw error
         }
     }
+}
 
-    private fun decryptPkcs8(credentials: TransferCredentials): String {
-        if (!credentials.privateKey.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")) return credentials.privateKey
-        val password = credentials.passphrase.toCharArray()
+internal fun newSshClient(): SSHClient {
+    configureSshCrypto()
+    return SSHClient()
+}
+
+internal fun authenticatedSsh(
+    account: TransferAccount,
+    credentials: TransferCredentials,
+    newClient: () -> SSHClient,
+): SSHClient = run {
+    val ssh = newClient()
+    val verifier = SshHostVerifier(account.hostKeyFingerprint)
+    try {
+        ssh.connectTimeout = account.timeoutSeconds * 1_000
+        ssh.timeout = account.timeoutSeconds * 1_000
+        ssh.addHostKeyVerifier(verifier)
         try {
-            val encrypted = PEMParser(StringReader(credentials.privateKey)).use { it.readObject() } as PKCS8EncryptedPrivateKeyInfo
-            // SSHJ's PKCS8 reader uses AlgorithmParameters.toString() as a cipher name, which varies by provider.
-            val decryptor = JceOpenSSLPKCS8DecryptorProviderBuilder().setProvider("LunaSSH").build(password)
-            val bytes = encrypted.decryptPrivateKeyInfo(decryptor).encoded
-            return "-----BEGIN PRIVATE KEY-----\n${Base64.getEncoder().encodeToString(bytes)}\n-----END PRIVATE KEY-----\n"
-        } finally {
-            password.fill('\u0000')
+            ssh.connect(account.host, account.port)
+        } catch (error: Exception) {
+            if (error is CancellationException) throw error
+            verifier.required?.let { throw it }
+            throw error
         }
+        if (account.authentication == TransferAuthentication.PRIVATE_KEY) {
+            val key = try {
+                ssh.loadKeys(decryptPkcs8(credentials), null, object : PasswordFinder {
+                    override fun reqPassword(resource: Resource<*>): CharArray = credentials.passphrase.toCharArray()
+                    override fun shouldRetry(resource: Resource<*>): Boolean = false
+                }).also { it.private }
+            } catch (error: Exception) {
+                if (error is CancellationException) throw error
+                throw StorageException(StorageError.AUTH, "The private key could not be opened")
+            }
+            ssh.authPublickey(account.username, key)
+        } else {
+            ssh.authPassword(account.username, credentials.password.toCharArray())
+        }
+        ssh
+    } catch (error: Exception) {
+        closeSshResource(ssh)
+        throw error
+    }
+}
+
+private fun decryptPkcs8(credentials: TransferCredentials): String {
+    if (!credentials.privateKey.contains("-----BEGIN ENCRYPTED PRIVATE KEY-----")) return credentials.privateKey
+    val password = credentials.passphrase.toCharArray()
+    try {
+        val encrypted = PEMParser(StringReader(credentials.privateKey)).use { it.readObject() } as PKCS8EncryptedPrivateKeyInfo
+        // SSHJ's PKCS8 reader uses AlgorithmParameters.toString() as a cipher name, which varies by provider.
+        val decryptor = JceOpenSSLPKCS8DecryptorProviderBuilder().setProvider("LunaSSH").build(password)
+        val bytes = encrypted.decryptPrivateKeyInfo(decryptor).encoded
+        return "-----BEGIN PRIVATE KEY-----\n${Base64.getEncoder().encodeToString(bytes)}\n-----END PRIVATE KEY-----\n"
+    } finally {
+        password.fill('\u0000')
     }
 }
 
@@ -136,6 +152,8 @@ private class ConnectedSftp(
     private val root: String,
 ) : TransferClient {
     override fun alive(): Boolean = ssh.isConnected && ssh.isAuthenticated && sftp.sftpEngine.subsystem.isOpen
+
+    override fun shellPath(path: String): String = sshFailure { checked(path, allowLeafLink = true).path }
 
     override fun list(path: String): List<TransferItem> = sshFailure {
         val wire = checked(path)
@@ -332,7 +350,7 @@ private class ConnectedSftp(
     }
 }
 
-internal fun <T> sshFailure(block: () -> T): T = try {
+internal fun <T> sshFailure(protocol: String = "SFTP", block: () -> T): T = try {
     block()
 } catch (error: CancellationException) {
     throw error
@@ -369,11 +387,11 @@ internal fun <T> sshFailure(block: () -> T): T = try {
         StorageError.NO_SPACE -> "The server has no free space"
         StorageError.UNSUPPORTED -> "The server does not support this operation"
         StorageError.INVALID_NAME -> "Invalid name"
-        else -> "The SFTP operation failed"
+        else -> "The $protocol operation failed"
     })
 }
 
-private fun closeSshResource(resource: Closeable) {
+internal fun closeSshResource(resource: Closeable) {
     try { resource.close() } catch (error: Exception) { if (error is CancellationException) throw error }
 }
 

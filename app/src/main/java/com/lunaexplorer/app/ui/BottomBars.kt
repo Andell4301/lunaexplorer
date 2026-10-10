@@ -228,6 +228,7 @@ internal fun SelectionBar(
                 ScopeChip("Folders", "Select all folders",
                     enabled = state.entries.any { it.directory }, onClick = viewModel::selectAllFolders)
                 ScopeChip("Invert", "Invert selection", onClick = viewModel::invertSelection)
+                ScopeChip("Fill", "Fill selection", enabled = entries.size > 1, onClick = viewModel::fillSelection)
             }
             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 2.dp),
                 verticalAlignment = Alignment.CenterVertically) {
