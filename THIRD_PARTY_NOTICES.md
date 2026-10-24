@@ -6,14 +6,14 @@ Luna's own license. Full license texts and notices are included in
 packaged in the APK as `assets/third-party-notices.txt`.
 
 This inventory was checked against `app:releaseRuntimeClasspath` on
-2026-09-21. The packaged text lists the exact resolved coordinates, including
+2026-10-15. The packaged text lists the exact resolved coordinates, including
 transitive dependencies and platform metadata. The table groups related modules
 for readability; release shrinking may remove unused code.
 
 | Component | Resolved version(s) | License | Upstream |
 | --- | --- | --- | --- |
 | AndroidX and Jetpack Compose, including Material icons | Compose 1.12.0, Material 3 1.4.0, icons 1.7.8; other AndroidX module versions listed in the packaged inventory | Apache-2.0 | [AndroidX](https://android.googlesource.com/platform/frameworks/support/) |
-| AndroidX Media3 / ExoPlayer, including Media3 Session | 1.11.0 | Apache-2.0 | [Media3](https://github.com/androidx/media) |
+| AndroidX Media3 / ExoPlayer, including Session, Transformer and video effects | 1.11.0 | Apache-2.0 | [Media3](https://github.com/androidx/media) |
 | Kotlin standard library and JDK compatibility modules | 2.2.10; JDK 7/8 modules 1.8.22 | Apache-2.0 | [Kotlin](https://github.com/JetBrains/kotlin) |
 | Kotlin coroutines | 1.10.2 | Apache-2.0 | [kotlinx.coroutines](https://github.com/Kotlin/kotlinx.coroutines) |
 | Kotlin serialization | 1.9.0 | Apache-2.0 | [kotlinx.serialization](https://github.com/Kotlin/kotlinx.serialization) |
@@ -41,6 +41,7 @@ for readability; release shrinking may remove unused code.
 
 Commons Net supplies FTP and FTPS. SSHJ supplies SFTP and SSH authentication,
 with Bouncy Castle's PKIX and utility modules for private-key parsing.
+Media3 Transformer and effects supply clip export and subtitle burn-in.
 xterm.js supplies the terminal emulator. Its JavaScript, stylesheet and Fit addon
 are bundled from the official npm packages; the terminal loads no remote assets.
 

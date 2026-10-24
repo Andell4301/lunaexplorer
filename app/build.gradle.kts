@@ -33,8 +33,8 @@ android {
         applicationId = "com.lunaexplorer.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 14
-        versionName = "1.5.0"
+        versionCode = 15
+        versionName = "1.6.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
     buildFeatures { compose = true; aidl = true }
@@ -114,6 +114,8 @@ dependencies {
     implementation("androidx.media3:media3-exoplayer:1.11.0")
     implementation("androidx.media3:media3-ui:1.11.0")
     implementation("androidx.media3:media3-session:1.11.0")
+    implementation("androidx.media3:media3-transformer:1.11.0")
+    implementation("androidx.media3:media3-effect:1.11.0")
     implementation("dev.snipme:highlights:1.1.0")
     testImplementation("junit:junit:4.13.2")
     // Archive fixtures with non-UTF-8 filename encodings and Unicode extra fields.

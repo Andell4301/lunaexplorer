@@ -74,6 +74,61 @@ class BrowserFiles internal constructor(
         _state.value.roots.filter { resolver.shownPathOf(it.ref) != null }
     }
 
+    fun destinationRoots(): List<StorageRoot> = _state.value.roots.filter { !it.hidden && !it.readOnly }
+
+    suspend fun folderForSaving(ref: NodeRef): Entry? = withContext(Dispatchers.IO) {
+        graph.providers.provider(ref).stat(ref).takeIf { it.directory && Capability.CREATE in it.capabilities }
+    }
+
+    suspend fun clipDestination(entry: Entry): Entry? {
+        val parent = try {
+            withContext(Dispatchers.IO) { graph.providers.provider(entry.ref).parentOf(entry.ref) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            currentCoroutineContext().ensureActive()
+            null
+        }
+        for (ref in listOfNotNull(parent, _state.value.location?.ref).distinct()) {
+            try { folderForSaving(ref)?.let { return it } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (error: Exception) { currentCoroutineContext().ensureActive() }
+        }
+        return null
+    }
+
+    suspend fun createClipFile(): File {
+        var created: File? = null
+        try {
+            return withContext(Dispatchers.IO) { graph.clipFiles.create().also { created = it } }
+        } catch (error: Throwable) {
+            withContext(NonCancellable + Dispatchers.IO) { created?.delete() }
+            throw error
+        }
+    }
+
+    suspend fun saveClip(file: File, destination: NodeRef, name: String): String = withContext(Dispatchers.IO) {
+        validateName(name)
+        requireNotNull(folderForSaving(destination)) { "This folder is read-only" }
+        ensureActive()
+        val (queuedFile, source) = graph.clipFiles.take(file)
+        val request = OperationRequest(type = OperationType.MOVE, sources = listOf(source), destination = destination, name = name)
+        withContext(NonCancellable) {
+            try {
+                graph.queue.enqueue(request, "Save clip $name")
+            } catch (cancelled: CancellationException) {
+                if (graph.database.request(request.id) == null) queuedFile.delete()
+                throw cancelled
+            } catch (error: Exception) {
+                if (graph.database.request(request.id) == null) {
+                    queuedFile.delete()
+                    throw error
+                }
+            }
+        }
+        request.id
+    }
+
     suspend fun foldersIn(ref: NodeRef, hidden: Boolean): List<Entry> = withContext(Dispatchers.IO) {
         val found = ArrayList<Entry>()
         graph.providers.provider(ref).list(ref).collect { batch -> batch.filterTo(found) { it.directory && (hidden || !it.hidden) } }

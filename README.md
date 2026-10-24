@@ -97,6 +97,12 @@ Procedures run manually or on once, interval, daily or weekly schedules. Schedul
 
 Media playback uses Android's codecs, so supported formats vary by device. Office documents are reading previews and may differ from their original layout. PDF text selection requires Android 15 or later. Legacy DOC/PPT files, protected Office documents and DRM-protected EPUBs require another app. The interface is currently available in English.
 
+In the video player, **More → Cut video** saves a portion as a new MP4. The **Cut** tab has a range slider and precise time fields. Play or scrub to a scene, step backward or forward by a frame, and use **Set start / Set end** to mark it. **Preview** plays the selected range. The **Export** tab holds the name and subtitle options; **Save to…** chooses the destination shown beside it. Playback and marking controls remain visible beside the tabs in landscape. Frame stepping uses presentation timestamps; the first step in some containers may need to scan the file. The clip uses the selected audio track, including **Off**. Saving uses the operation queue's normal verification and conflict handling.
+
+**No subtitles** copies the compressed video and audio without re-encoding and leaves subtitles out. MP4 edit lists hide frames before the chosen start; players that ignore edit lists may start at the preceding keyframe. Those earlier frames remain in the file, and the end is limited to encoded-frame boundaries. Codecs that cannot be copied into MP4 fail without silently reducing quality.
+
+**Burn in subtitles** renders the selected embedded or external subtitle track with its timing and appearance, and re-encodes the video. This may reduce quality; audio remains unchanged. Device codec support applies, and unsupported subtitle layouts are reported. Subtitle preparation and rendering show separate progress; Cancel returns to the editor with the cut settings intact. Keep the clip screen open while rendering; closing it or recreating the Activity cancels rendering. Once queued, saving can finish after leaving the viewer.
+
 Leaving a video with Home or app switching uses picture in picture by default. Settings → Video player also offers Background play and Off; the player provides both actions directly and gesture switches under More → Gestures. Back/Close stops playback. Audio background play defaults on and can be changed in the player or Settings → Audio player.
 
 ## Development

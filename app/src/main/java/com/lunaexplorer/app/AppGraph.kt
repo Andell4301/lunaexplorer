@@ -8,6 +8,7 @@ import com.lunaexplorer.app.debug.DebugLog
 import com.lunaexplorer.app.storage.ApkInstaller
 import com.lunaexplorer.app.storage.AppInventory
 import com.lunaexplorer.app.storage.CredentialVault
+import com.lunaexplorer.app.storage.ClipFiles
 import com.lunaexplorer.app.storage.RemoteFailure
 import com.lunaexplorer.app.storage.DeviceStorage
 import com.lunaexplorer.app.storage.FileInspector
@@ -118,7 +119,8 @@ class AppGraph(
     val shizuku = ShizukuLink(shizukuGateway, CoroutineScope(SupervisorJob() + Dispatchers.Default), roots = { local.definitions() })
     // [local] stays the plain provider for callers that only map paths; everything that opens files goes through the registry.
     private val assistedLocal = AssistedLocalProvider(local, application.packageName) { shizuku.files }
-    val providers: ProviderRegistry = ProviderRegistry(listOf(assistedLocal, saf, insideArchives, smb, b2, ftp, sftp, incoming))
+    internal val clipFiles = ClipFiles(File(application.filesDir, "video-clips"), probe)
+    val providers: ProviderRegistry = ProviderRegistry(listOf(assistedLocal, saf, insideArchives, smb, b2, ftp, sftp, incoming, clipFiles.provider))
 
     /** Whether Android closes [ref] to file managers (Android/data and Android/obb since Android 11). */
     fun closedToApps(ref: NodeRef): Boolean = assistedLocal.closes(ref)

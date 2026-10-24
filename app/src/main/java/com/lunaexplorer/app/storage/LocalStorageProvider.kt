@@ -38,8 +38,8 @@ class LocalStorageProvider(
     private val names: SystemNames? = null,
     private val probe: PathProbe = SystemProbe,
     private val openDirectory: (Path) -> DirectoryStream<Path> = Files::newDirectoryStream,
+    override val id: String = "local",
 ) : StorageProvider, PathAddressable {
-    override val id = "local"
     override val features = setOf(Feature.STABLE_KEYS, Feature.SET_TIMES, Feature.RANGE_READ)
 
     @Volatile private var rootDefinitions: List<LocalRoot> = initialRoots

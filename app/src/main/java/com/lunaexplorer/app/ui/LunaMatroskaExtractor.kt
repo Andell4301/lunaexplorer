@@ -9,6 +9,7 @@ import androidx.media3.extractor.DefaultExtractorsFactory
 import androidx.media3.extractor.Extractor
 import androidx.media3.extractor.ExtractorInput
 import androidx.media3.extractor.ExtractorsFactory
+import androidx.media3.extractor.PositionHolder
 import androidx.media3.extractor.mkv.MatroskaExtractor
 import androidx.media3.extractor.text.SubtitleParser
 import java.io.ByteArrayInputStream
@@ -18,11 +19,29 @@ import java.util.zip.DataFormatException
 import java.util.zip.Inflater
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-internal fun lunaExtractorsFactory(parsers: SubtitleParser.Factory, matroskaFlags: Int = 0): ExtractorsFactory {
+internal fun lunaExtractorsFactory(
+    parsers: SubtitleParser.Factory,
+    matroskaFlags: Int = 0,
+    subtitleEndTimeUs: Long? = null,
+): ExtractorsFactory {
     val delegate = DefaultExtractorsFactory().setSubtitleParserFactory(parsers).setMatroskaExtractorFlags(matroskaFlags)
     var currentParsers = parsers
     fun replace(extractors: Array<Extractor>): Array<Extractor> = extractors.map {
-        if (it is MatroskaExtractor) LunaMatroskaExtractor(currentParsers, matroskaFlags) else it
+        if (it is MatroskaExtractor) {
+            val matroska = LunaMatroskaExtractor(currentParsers, matroskaFlags, subtitleEndTimeUs)
+            if (subtitleEndTimeUs == null) matroska else object : Extractor by matroska {
+                override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int = try {
+                    matroska.read(input, seekPosition)
+                } catch (skip: SkipSubtitleCluster) {
+                    if (skip.position < input.position || (input.length >= 0 && skip.position > input.length)) {
+                        throw malformed("Invalid subtitle cluster size")
+                    }
+                    matroska.seek(skip.position, 0)
+                    seekPosition.position = skip.position
+                    Extractor.RESULT_SEEK
+                }
+            }
+        } else it
     }.toTypedArray()
     return object : ExtractorsFactory {
         override fun setSubtitleParserFactory(subtitleParserFactory: SubtitleParser.Factory): ExtractorsFactory {
@@ -37,13 +56,37 @@ internal fun lunaExtractorsFactory(parsers: SubtitleParser.Factory, matroskaFlag
 }
 
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-private class LunaMatroskaExtractor(parsers: SubtitleParser.Factory, flags: Int) : MatroskaExtractor(parsers, flags) {
+private class LunaMatroskaExtractor(
+    private val parsers: SubtitleParser.Factory,
+    flags: Int,
+    private val subtitleEndTimeUs: Long?,
+) : MatroskaExtractor(parsers, flags) {
     private val compressedTracks = mutableSetOf<Long>()
     private var compression: Long? = null
+    private var timestampScaleNs = 1_000_000L
+    private var trackTimestampScale = 1.0
+    private var selectedTextTrack = false
+    private var canBoundClusters = true
+    private var subtitleCodecDelayNs = 0L
+    private var clusterEnd: Long? = null
+
+    override fun getElementType(id: Int): Int {
+        val type = super.getElementType(id)
+        return if (subtitleEndTimeUs != null && id == TRACK_TIMESTAMP_SCALE) ELEMENT_TYPE_FLOAT else type
+    }
+
+    override fun floatElement(id: Int, value: Double) {
+        if (id == TRACK_TIMESTAMP_SCALE) trackTimestampScale = value
+        super.floatElement(id, value)
+    }
 
     override fun startMasterElement(id: Int, contentPosition: Long, contentSize: Long) {
-        if (id == TRACK_ENTRY) compression = null
+        if (id == TRACK_ENTRY) { compression = null; trackTimestampScale = 1.0 }
         if (id == CONTENT_COMPRESSION) compression = 0L
+        if (id == CLUSTER) {
+            clusterEnd = if (contentSize < 0 || contentSize in UNKNOWN_ELEMENT_SIZES ||
+                contentSize > Long.MAX_VALUE - contentPosition) null else contentPosition + contentSize
+        }
         super.startMasterElement(id, contentPosition, contentSize)
     }
 
@@ -57,17 +100,39 @@ private class LunaMatroskaExtractor(parsers: SubtitleParser.Factory, flags: Int)
             }
         }
         super.integerElement(id, value)
+        if (id == TIMESTAMP_SCALE) timestampScaleNs = value
+        if (id == CLUSTER_TIMESTAMP && clusterIsLate(value)) clusterEnd?.let { throw SkipSubtitleCluster(it) }
     }
 
     override fun endMasterElement(id: Int) {
+        val track = if (id == TRACK_ENTRY) getCurrentTrack(id) else null
         if (id == TRACK_ENTRY && compression == 0L) {
-            val track = getCurrentTrack(id)
-            if (track.type != C.TRACK_TYPE_TEXT || track.hasContentEncryption) {
+            if (checkNotNull(track).type != C.TRACK_TYPE_TEXT || track.hasContentEncryption) {
                 throw malformed("Compressed track is not a readable subtitle")
             }
             compressedTracks.add(track.number.toLong())
         }
         super.endMasterElement(id)
+        if (subtitleEndTimeUs != null && track?.type == C.TRACK_TYPE_TEXT &&
+            track.format?.let(parsers::supportsFormat) == true) {
+            selectedTextTrack = true
+            canBoundClusters = canBoundClusters && readableSubtitleFormat(checkNotNull(track.format)) &&
+                trackTimestampScale == 1.0 && track.codecDelayNs >= 0
+            subtitleCodecDelayNs = maxOf(subtitleCodecDelayNs, track.codecDelayNs)
+        }
+        if (id == CLUSTER) clusterEnd = null
+    }
+
+    private fun clusterIsLate(timestamp: Long): Boolean {
+        val end = subtitleEndTimeUs ?: return false
+        if (!selectedTextTrack || !canBoundClusters || timestamp < 0 || timestampScaleNs <= 0 || clusterEnd == null) return false
+        return try {
+            // A block can precede its cluster timestamp by 32768 ticks; later clusters may be reordered.
+            val earliestNs = Math.subtractExact(Math.multiplyExact(timestamp - 32768L, timestampScaleNs), subtitleCodecDelayNs)
+            Math.floorDiv(earliestNs, 1000L) >= end
+        } catch (_: ArithmeticException) {
+            false
+        }
     }
 
     override fun binaryElement(id: Int, contentSize: Int, input: ExtractorInput) {
@@ -107,6 +172,8 @@ private class LunaMatroskaExtractor(parsers: SubtitleParser.Factory, flags: Int)
     }
 }
 
+private class SkipSubtitleCluster(val position: Long) : RuntimeException(null, null, false, false)
+
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 private fun inflate(payload: ByteArray, header: ByteArray): ByteArray {
     val inflater = Inflater()
@@ -133,8 +200,14 @@ private fun inflate(payload: ByteArray, header: ByteArray): ByteArray {
 private fun malformed(message: String): ParserException = ParserException.createForMalformedContainer(message, null)
 
 private const val TRACK_ENTRY = 0xAE
+private const val ELEMENT_TYPE_FLOAT = 5
+private const val TRACK_TIMESTAMP_SCALE = 0x23314F
+private const val TIMESTAMP_SCALE = 0x2AD7B1
+private const val CLUSTER = 0x1F43B675
+private const val CLUSTER_TIMESTAMP = 0xE7
 private const val CONTENT_COMPRESSION = 0x5034
 private const val COMPRESSION_ALGORITHM = 0x4254
 private const val BLOCK = 0xA1
 private const val SIMPLE_BLOCK = 0xA3
 private const val MAX_COMPRESSED_SUBTITLE_BYTES = 2 * 1024 * 1024
+private val UNKNOWN_ELEMENT_SIZES = (1..8).map { (1L shl (it * 7)) - 1 }.toSet()

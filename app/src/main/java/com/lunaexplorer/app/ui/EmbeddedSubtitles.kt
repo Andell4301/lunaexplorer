@@ -49,46 +49,65 @@ internal suspend fun readEmbeddedSubtitleDocument(
     identity: MediaTrackIdentity,
     onProgress: (Float?) -> Unit = {},
 ): EmbeddedSubtitleDocument {
+    val metadata = SubtitleMetadata()
+    val transcript = SubtitleTranscript(metadata)
+    readEmbeddedSubtitleCues(source, identity, true, metadata, onProgress) { cues, _ -> transcript.add(cues) }
+    val context = currentCoroutineContext()
+    return runInterruptible(Dispatchers.IO) {
+        EmbeddedSubtitleDocument(transcript.text { context.ensureActive() }, metadata.text())
+    }
+}
+
+@androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+internal suspend fun readEmbeddedSubtitleCues(
+    source: PlaybackSource,
+    identity: MediaTrackIdentity,
+    textOnly: Boolean = false,
+    metadata: SubtitleMetadata? = null,
+    onProgress: (Float?) -> Unit = {},
+    endTimeUs: Long? = null,
+    onCues: (CuesWithTiming, Int) -> Unit,
+): Boolean {
     val context = currentCoroutineContext()
     return runInterruptible(Dispatchers.IO) {
         val active = { context.ensureActive() }
         val parser = OffsetSubtitleParserFactory(SubtitleOffset())
-        val metadata = SubtitleMetadata()
         fun selected(format: Format): Boolean =
             mediaTrackIdentity(format).copy(mimeType = null) == identity.copy(mimeType = null)
         val parsers = object : SubtitleParser.Factory {
             override fun supportsFormat(format: Format): Boolean =
-                selected(format) && readableSubtitleFormat(format) && parser.supportsFormat(format)
+                selected(format) && (!textOnly || readableSubtitleFormat(format)) &&
+                    format.drmInitData == null && parser.supportsFormat(format)
             override fun getCueReplacementBehavior(format: Format): Int = parser.getCueReplacementBehavior(format)
             override fun create(format: Format): SubtitleParser {
-                metadata.format(format)
+                metadata?.format(format)
                 val delegate = parser.create(format)
                 return object : SubtitleParser by delegate {
                     override fun parse(data: ByteArray, offset: Int, length: Int,
                         outputOptions: SubtitleParser.OutputOptions, output: Consumer<CuesWithTiming>) {
                         active()
-                        metadata.sample(format, data, offset, length)
+                        metadata?.sample(format, data, offset, length)
                         delegate.parse(data, offset, length, outputOptions, output)
                     }
                 }
             }
         }
-        val transcript = SubtitleTranscript(metadata)
         val tracks = mutableMapOf<Int, TrackOutput>()
         val output = object : ExtractorOutput {
             override fun track(id: Int, type: Int): TrackOutput = tracks.getOrPut(id) {
-                if (type == C.TRACK_TYPE_TEXT) SubtitleTextOutput(::selected, transcript, active)
+                if (type == C.TRACK_TYPE_TEXT) SubtitleTextOutput(::selected, onCues, active)
                 else SkippingTrackOutput()
             }
             override fun endTracks() = Unit
-            override fun seekMap(seekMap: SeekMap) = metadata.duration(seekMap.durationUs)
+            override fun seekMap(seekMap: SeekMap) { metadata?.duration(seekMap.durationUs) }
         }
         var channel: SeekableByteChannel? = null
         var data: DataSource? = null
-        val extractors = lunaExtractorsFactory(parsers, MatroskaExtractor.FLAG_DISABLE_SEEK_FOR_CUES)
-            .createExtractors(source.uri, emptyMap())
+        var extractors = emptyArray<Extractor>()
         try {
             runBlocking(context.minusKey(ContinuationInterceptor)) { source.openChannel?.invoke()?.also { channel = it } }
+            extractors = lunaExtractorsFactory(parsers, MatroskaExtractor.FLAG_DISABLE_SEEK_FOR_CUES,
+                endTimeUs.takeIf { channel != null }).createExtractors(source.uri, emptyMap())
             data = if (channel == null) source.dataSources.createDataSource() else null
             val channelInput = channel?.let { SubtitleExtractorInput(it, active) }
             val reader = DataReader { bytes, offset, length -> active(); checkNotNull(data).read(bytes, offset, length) }
@@ -129,7 +148,7 @@ internal suspend fun readEmbeddedSubtitleDocument(
                 }
             }
             onProgress(1f)
-            EmbeddedSubtitleDocument(transcript.text(active), metadata.text())
+            tracks.values.filterIsInstance<SubtitleTextOutput>().any { it.readable }
         } finally {
             try {
                 channel?.close()
@@ -144,16 +163,19 @@ internal suspend fun readEmbeddedSubtitleDocument(
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 private class SubtitleTextOutput(
     private val selected: (Format) -> Boolean,
-    private val transcript: SubtitleTranscript,
+    private val onCues: (CuesWithTiming, Int) -> Unit,
     private val active: () -> Unit,
 ) : TrackOutput {
     private val discard = SkippingTrackOutput()
     private val decoder = CueDecoder()
     private val pending = ByteArrayOutputStream()
-    private var readable = false
+    var readable = false
+        private set
+    private var replacementBehavior = Format.CUE_REPLACEMENT_BEHAVIOR_MERGE
 
     override fun format(format: Format) {
         readable = selected(format) && format.sampleMimeType == MimeTypes.APPLICATION_MEDIA3_CUES
+        replacementBehavior = format.cueReplacementBehavior
     }
 
     override fun sampleData(input: DataReader, length: Int, allowEndOfInput: Boolean, sampleDataPart: Int): Int {
@@ -187,7 +209,7 @@ private class SubtitleTextOutput(
         val bytes = pending.toByteArray()
         require(offset in 0..bytes.size && size in 0..(bytes.size - offset)) { "This subtitle track could not be read" }
         val start = bytes.size - offset - size
-        transcript.add(decoder.decode(timeUs, bytes, start, size))
+        onCues(decoder.decode(timeUs, bytes, start, size), replacementBehavior)
         pending.reset()
         pending.write(bytes, bytes.size - offset, offset)
     }

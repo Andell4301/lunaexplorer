@@ -1,6 +1,6 @@
 Luna Explorer — third-party licenses and notices
 
-Inventory checked against app:releaseRuntimeClasspath on 2026-09-21.
+Inventory checked against app:releaseRuntimeClasspath on 2026-10-15.
 Dependencies retain their own licenses. This inventory includes resolved runtime
 libraries and their platform/BOM metadata; shrinking may remove unused code.
 It excludes dependencies used only for building or testing the application.
@@ -107,9 +107,12 @@ androidx.media3:media3-container:1.11.0
 androidx.media3:media3-database:1.11.0
 androidx.media3:media3-datasource:1.11.0
 androidx.media3:media3-decoder:1.11.0
+androidx.media3:media3-effect:1.11.0
 androidx.media3:media3-exoplayer:1.11.0
 androidx.media3:media3-extractor:1.11.0
+androidx.media3:media3-muxer:1.11.0
 androidx.media3:media3-session:1.11.0
+androidx.media3:media3-transformer:1.11.0
 androidx.media3:media3-ui:1.11.0
 androidx.media:media:1.7.0
 androidx.profileinstaller:profileinstaller:1.4.1
@@ -162,6 +165,7 @@ org.jetbrains.kotlinx:kotlinx-coroutines-android:1.10.2
 org.jetbrains.kotlinx:kotlinx-coroutines-bom:1.10.2
 org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.10.2
 org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2
+org.jetbrains.kotlinx:kotlinx-coroutines-guava:1.10.2
 org.jetbrains.kotlinx:kotlinx-serialization-bom:1.9.0
 org.jetbrains.kotlinx:kotlinx-serialization-core-jvm:1.9.0
 org.jetbrains.kotlinx:kotlinx-serialization-core:1.9.0

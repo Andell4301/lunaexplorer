@@ -23,7 +23,9 @@ import androidx.media3.common.TrackSelectionOverride
 import androidx.media3.common.VideoSize
 import androidx.media3.common.text.CueGroup
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.video.VideoFrameMetadataListener
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.DefaultTrackNameProvider
 import androidx.media3.ui.PlayerView
@@ -34,6 +36,8 @@ import com.lunaexplorer.core.NodeRef
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.roundToInt
@@ -77,8 +81,15 @@ internal class MediaPlayback(
     private var restoreAudio = false
     private var restoreSubtitle = false
     private var closed = false
+    @Volatile private var frameGeneration = 0L
+    private var renderedFrameUs = C.TIME_UNSET
+    private var steppedFrameUs: Long? = null
+    private var expectedFrameSeekMs: Long? = null
+    private var indexedVideo: MediaTrackIdentity? = null
+    private var frameIndex: VideoFrameIndex? = null
     private var layout: PlayerView? = null
     private var subtitleRenderer: LunaSubtitleView? = null
+    private var subtitlesVisible = true
     private var subtitleAppearance = SubtitleAppearance()
     private var repeatState by mutableStateOf(false)
     var repeat: Boolean
@@ -94,6 +105,8 @@ internal class MediaPlayback(
     var playing by mutableStateOf(false)
         private set
     var position by mutableLongStateOf(0L)
+        private set
+    var framePosition by mutableLongStateOf(0L)
         private set
     var duration by mutableLongStateOf(0L)
         private set
@@ -135,6 +148,24 @@ internal class MediaPlayback(
     val background: Boolean get() = session?.published == true
 
     private val listener = object : Player.Listener {
+        override fun onPositionDiscontinuity(oldPosition: Player.PositionInfo, newPosition: Player.PositionInfo, reason: Int) {
+            if (closed) return
+            val frameSeek = reason == Player.DISCONTINUITY_REASON_SEEK && newPosition.positionMs == expectedFrameSeekMs
+            expectedFrameSeekMs = null
+            if (!frameSeek) resetFramePosition()
+        }
+
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            if (closed || !playWhenReady) return
+            frameGeneration++
+            steppedFrameUs = null
+            expectedFrameSeekMs = null
+        }
+
+        override fun onPlaybackStateChanged(playbackState: Int) {
+            if (!closed && playbackState == Player.STATE_IDLE) resetFramePosition()
+        }
+
         override fun onCues(cueGroup: CueGroup) {
             if (!closed) subtitleRenderer?.setCues(cueGroup.cues)
         }
@@ -173,8 +204,20 @@ internal class MediaPlayback(
         }
     }
 
+    private val frameListener = VideoFrameMetadataListener { presentationTimeUs, releaseTimeNs, _, _ ->
+        val generation = frameGeneration
+        val delayMs = ((releaseTimeNs - System.nanoTime()) / 1_000_000).coerceAtLeast(0)
+        handler.postDelayed({
+            if (!closed && generation == frameGeneration) {
+                renderedFrameUs = presentationTimeUs
+                framePosition = videoFramePositionMs(steppedFrameUs ?: presentationTimeUs).coerceAtLeast(0)
+            }
+        }, delayMs)
+    }
+
     init {
         player.addListener(listener)
+        player.setVideoFrameMetadataListener(frameListener)
         player.setMediaItem(mediaItem())
         player.prepare()
     }
@@ -194,6 +237,7 @@ internal class MediaPlayback(
             builtInSubtitles.visibility = View.INVISIBLE
             subtitleRenderer = LunaSubtitleView(view.context).also { renderer ->
                 renderer.appearance = subtitleAppearance
+                renderer.visibility = if (subtitlesVisible) View.VISIBLE else View.INVISIBLE
                 // Added to the built-in SubtitleView's video-sized parent; an outer overlay would
                 // change cue coordinates and text size on letterboxed video.
                 subtitleParent.addView(renderer, subtitleParent.indexOfChild(builtInSubtitles) + 1,
@@ -232,6 +276,11 @@ internal class MediaPlayback(
         subtitleRenderer?.appearance = value
     }
 
+    fun setSubtitlesVisible(visible: Boolean) {
+        subtitlesVisible = visible
+        subtitleRenderer?.visibility = if (visible) View.VISIBLE else View.INVISIBLE
+    }
+
     private fun removeSubtitleRenderer() {
         subtitleRenderer?.let { renderer ->
             renderer.setCues(null)
@@ -243,6 +292,9 @@ internal class MediaPlayback(
 
     fun play() {
         if (closed || failure != null) return
+        frameGeneration++
+        steppedFrameUs = null
+        expectedFrameSeekMs = null
         if (player.playbackState == Player.STATE_ENDED) player.seekTo(0L)
         // A dismissed notification or a remote STOP leaves the player idle; play must prepare it again.
         if (player.playbackState == Player.STATE_IDLE) player.prepare()
@@ -256,6 +308,7 @@ internal class MediaPlayback(
 
     fun startAt(resume: PlaybackResume) {
         if (closed) return
+        resetFramePosition()
         player.seekTo(resume.position.coerceAtLeast(0L))
         refreshPosition()
         // Set even when paused, so the view does not start it from the top instead.
@@ -305,15 +358,49 @@ internal class MediaPlayback(
     fun refreshPosition() {
         if (closed) return
         position = player.currentPosition.coerceAtLeast(0L)
+        framePosition = videoFramePositionMs(steppedFrameUs ?: renderedFrameUs.takeIf { it != C.TIME_UNSET }
+            ?: (position * 1000)).coerceAtLeast(0)
         if (player.duration != C.TIME_UNSET) duration = player.duration.coerceAtLeast(0L)
         seekable = player.isCurrentMediaItemSeekable
     }
 
     fun seek(target: Long) {
         if (!closed && seekable) {
+            resetFramePosition()
+            player.setSeekParameters(SeekParameters.EXACT)
             player.seekTo(target.coerceIn(0L, duration))
             refreshPosition()
         }
+    }
+
+    suspend fun stepFrame(forward: Boolean): Long? {
+        if (closed || !seekable) return null
+        pause()
+        val generation = ++frameGeneration
+        val currentUs = steppedFrameUs ?: renderedFrameUs.takeIf { it != C.TIME_UNSET }
+            ?: (player.currentPosition.coerceAtLeast(0) * 1000)
+        val identity = player.videoFormat?.let(::mediaTrackIdentity)
+            ?: error("The video track is not ready")
+        val index = frameIndex.takeIf { indexedVideo == identity } ?: readVideoFrameIndex(source, identity)
+        currentCoroutineContext().ensureActive()
+        if (closed || generation != frameGeneration) return null
+        frameIndex = index
+        indexedVideo = identity
+        val targetUs = index.adjacent(currentUs, forward) ?: return null
+        val targetMs = videoFramePositionMs(targetUs)
+        steppedFrameUs = targetUs
+        expectedFrameSeekMs = targetMs
+        player.setSeekParameters(SeekParameters.EXACT)
+        player.seekTo(targetMs)
+        refreshPosition()
+        return framePosition
+    }
+
+    private fun resetFramePosition() {
+        frameGeneration++
+        renderedFrameUs = C.TIME_UNSET
+        steppedFrameUs = null
+        expectedFrameSeekMs = null
     }
 
     fun changeSpeed(value: Float) {
@@ -391,12 +478,22 @@ internal class MediaPlayback(
         handler.postDelayed(reloadSubtitles, 250)
     }
 
+    fun clipSelection(): VideoClipSelection {
+        val subtitle = (preferredSubtitle ?: trackIdentities[subtitleTrack])?.let { identity ->
+            val external = externalSubtitles.firstOrNull { it.id == identity.id }
+            VideoClipSubtitle(identity, external?.uri?.path?.let(::File))
+        }
+        return VideoClipSelection(preferredAudio ?: trackIdentities[audioTrack], audioOff, subtitle,
+            subtitleDelayMs, subtitleAppearance, player.videoFormat, audioTracks.isNotEmpty())
+    }
+
     private fun mediaItem(): MediaItem = MediaItem.Builder().setUri(uri)
         .setMediaMetadata(MediaMetadata.Builder().setTitle(title).build())
         .setSubtitleConfigurations(externalSubtitles).build()
 
     private fun reloadAtCurrentPosition() {
         handler.removeCallbacks(reloadSubtitles)
+        resetFramePosition()
         val at = player.currentPosition.coerceAtLeast(0L)
         preferredAudio = preferredAudio ?: trackIdentities[audioTrack]
         if (pendingExternalId == null) preferredSubtitle = preferredSubtitle ?: trackIdentities[subtitleTrack]
@@ -453,7 +550,10 @@ internal class MediaPlayback(
     fun close() {
         if (closed) return
         closed = true
-        handler.removeCallbacks(reloadSubtitles)
+        resetFramePosition()
+        frameIndex = null
+        handler.removeCallbacksAndMessages(null)
+        player.clearVideoFrameMetadataListener(frameListener)
         player.removeListener(listener)
         removeSubtitleRenderer()
         layout?.removeOnLayoutChangeListener(pictureLayout)

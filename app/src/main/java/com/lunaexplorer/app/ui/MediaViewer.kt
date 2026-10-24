@@ -38,6 +38,7 @@ import androidx.compose.material.icons.automirrored.outlined.VolumeUp
 import androidx.compose.material.icons.outlined.Forward10
 import androidx.compose.material.icons.outlined.Audiotrack
 import androidx.compose.material.icons.outlined.Check
+import androidx.compose.material.icons.outlined.ContentCut
 import androidx.compose.material.icons.outlined.Repeat
 import androidx.compose.material.icons.outlined.Speed
 import androidx.compose.material.icons.outlined.Subtitles
@@ -150,6 +151,7 @@ internal fun RichMediaViewer(entry: Entry, viewModel: BrowserViewModel, onDismis
     var speedMenu by remember(entry.ref) { mutableStateOf(false) }
     var appearanceDialog by remember(entry.ref) { mutableStateOf(false) }
     var gestureDialog by remember(entry.ref) { mutableStateOf(false) }
+    var clipOpen by remember(entry.ref) { mutableStateOf(false) }
     var overflowOpen by remember(entry.ref) { mutableStateOf(false) }
     var subtitleBusy by remember(entry.ref) { mutableStateOf(false) }
     var trackMessage by remember(entry.ref) { mutableStateOf<String?>(null) }
@@ -223,10 +225,10 @@ internal fun RichMediaViewer(entry: Entry, viewModel: BrowserViewModel, onDismis
         onDispose { lifecycle.removeObserver(observer) }
     }
     DisposableEffect(pip) { onDispose { pip?.arm(null) } }
-    LaunchedEffect(pip, pipOn, autoPip, player, player?.playing, player?.seekable,
+    LaunchedEffect(pip, pipOn, autoPip, clipOpen, player, player?.playing, player?.seekable,
         player?.videoWidth, player?.videoHeight, player?.pictureBounds) {
         if (pip == null) return@LaunchedEffect
-        if (!pipOn || player == null) { pip.arm(null); return@LaunchedEffect }
+        if (!pipOn || player == null || clipOpen) { pip.arm(null); return@LaunchedEffect }
         pip.arm(
             PipRequest(pipAspect(player.videoWidth, player.videoHeight), player.pictureBounds,
                 player.playing, player.seekable, autoEnter = autoPip),
@@ -298,7 +300,7 @@ internal fun RichMediaViewer(entry: Entry, viewModel: BrowserViewModel, onDismis
     SideEffect {
         if (inPip) return@SideEffect
         bars?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (video && !chromeShown) bars?.hide(WindowInsetsCompat.Type.systemBars())
+        if (video && !chromeShown && !clipOpen) bars?.hide(WindowInsetsCompat.Type.systemBars())
         else bars?.show(WindowInsetsCompat.Type.systemBars())
     }
     // The dim layer behind this opaque window would otherwise flash while a PiP window shrinks.
@@ -358,6 +360,11 @@ internal fun RichMediaViewer(entry: Entry, viewModel: BrowserViewModel, onDismis
             chromeShown = true
             if (locked) lockOffered = true
         }
+    }
+
+    if (clipOpen && player != null && !inPip) {
+        VideoClipScreen(entry, player, viewModel) { clipOpen = false; chromeShown = true }
+        return
     }
 
     fun skip(step: Long) {
@@ -586,6 +593,11 @@ internal fun RichMediaViewer(entry: Entry, viewModel: BrowserViewModel, onDismis
                             ViewerBar(entry.name, onDismiss, entry = entry, viewModel = viewModel,
                                 onOverlayVisibilityChange = { overflowOpen = it },
                                 menuItems = { dismissMenu ->
+                                    DropdownMenuItem(text = { Text("Cut video") },
+                                        leadingIcon = { Icon(Icons.Outlined.ContentCut, null) },
+                                        enabled = player != null && player.seekable && player.duration > 0 &&
+                                            !player.buffering && player.failure == null,
+                                        onClick = { dismissMenu(); player?.pause(); clipOpen = true })
                                     DropdownMenuItem(text = { Text("Gestures") },
                                         leadingIcon = { Icon(Icons.Outlined.TouchApp, null) },
                                         onClick = { dismissMenu(); gestureDialog = true })

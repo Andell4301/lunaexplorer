@@ -39,29 +39,51 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.lunaexplorer.core.Entry
 import com.lunaexplorer.core.NodeRef
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
 
 @Composable
 internal fun FolderChooser(viewModel: BrowserViewModel, showHidden: Boolean, onDismiss: () -> Unit, onChoose: (String) -> Unit) {
+    FolderChooserContent(viewModel, showHidden, onDismiss, pathsOnly = true) { _, path -> path?.let(onChoose) }
+}
+
+@Composable
+internal fun FolderDestinationChooser(viewModel: BrowserViewModel, showHidden: Boolean, onDismiss: () -> Unit, onChoose: (Entry) -> Unit) {
+    FolderChooserContent(viewModel, showHidden, onDismiss, pathsOnly = false) { entry, _ -> entry?.let(onChoose) }
+}
+
+@Composable
+private fun FolderChooserContent(
+    viewModel: BrowserViewModel,
+    showHidden: Boolean,
+    onDismiss: () -> Unit,
+    pathsOnly: Boolean,
+    onChoose: (Entry?, String?) -> Unit,
+) {
     // The way down from a storage; empty at the list of storages.
     var trail by remember { mutableStateOf(emptyList<Pair<NodeRef, String>>()) }
     var rows by remember { mutableStateOf<List<Pair<NodeRef, String>>?>(null) }
     var failure by remember { mutableStateOf<String?>(null) }
     var path by remember { mutableStateOf<String?>(null) }
+    var destination by remember { mutableStateOf<Entry?>(null) }
     val here = trail.lastOrNull()?.first
 
     LaunchedEffect(here) {
-        rows = null; failure = null; path = null
+        rows = null; failure = null; path = null; destination = null
         try {
-            if (here == null) rows = viewModel.files.pathRoots().map { it.ref to it.title }
+            if (here == null) rows = (if (pathsOnly) viewModel.files.pathRoots() else viewModel.files.destinationRoots())
+                .map { it.ref to it.title }
             else {
                 path = viewModel.files.shownPathOf(here)
+                if (!pathsOnly) destination = viewModel.files.folderForSaving(here)
                 rows = viewModel.files.foldersIn(here, showHidden).map { it.ref to it.name }
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (error: Exception) {
+            ensureActive()
             rows = emptyList(); failure = error.message ?: "This folder could not be read"
         }
     }
@@ -106,7 +128,8 @@ internal fun FolderChooser(viewModel: BrowserViewModel, showHidden: Boolean, onD
                 }
                 HorizontalDivider()
                 Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp)) {
-                    FilledTonalButton(enabled = path != null, onClick = { path?.let(onChoose) }) { Text("Choose this folder") }
+                    FilledTonalButton(enabled = if (pathsOnly) path != null else destination != null,
+                        onClick = { onChoose(destination, path) }) { Text("Choose this folder") }
                 }
                 Spacer(Modifier.windowInsetsBottomHeight(WindowInsets.navigationBars))
             }
