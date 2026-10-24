@@ -459,8 +459,9 @@ class OperationEngine(
                 currentCoroutineContext().ensureActive()
                 val origin = provider ?: registry.provider(snapshot.entry.ref)
                 val current = origin.stat(snapshot.entry.ref)
+                val timestampChanged = current.modified != snapshot.entry.modified
                 if (current.directory != snapshot.entry.directory || current.name != snapshot.entry.name ||
-                    current.size != snapshot.entry.size || current.modified != snapshot.entry.modified) {
+                    current.size != snapshot.entry.size || (current.directory && timestampChanged)) {
                     throw StorageException(StorageError.IO, "${snapshot.entry.name} changed during the operation; source retained")
                 }
                 if (current.directory) {
@@ -469,10 +470,18 @@ class OperationEngine(
                     if (children != snapshot.children!!.toSet()) {
                         throw StorageException(StorageError.IO, "${current.name} contents changed; source retained")
                     }
-                } else if (verifyContent) {
+                } else if (verifyContent || timestampChanged) {
+                    // A first read can refresh cached timestamps without changing file content.
                     val currentHash = hash(origin, current.ref)
                     if (currentHash.size != snapshot.hash!!.size || !currentHash.digest.contentEquals(snapshot.hash.digest)) {
                         throw StorageException(StorageError.IO, "${current.name} changed after copying; source retained")
+                    }
+                    if (timestampChanged) {
+                        val checked = origin.stat(current.ref)
+                        if (checked.directory != current.directory || checked.name != current.name ||
+                            checked.size != current.size || checked.modified != current.modified) {
+                            throw StorageException(StorageError.IO, "${current.name} changed during the operation; source retained")
+                        }
                     }
                 }
             }
