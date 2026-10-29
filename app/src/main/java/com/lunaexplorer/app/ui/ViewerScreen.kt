@@ -60,9 +60,13 @@ fun ViewerScreen(entry: Entry, kind: ViewerKind, viewModel: BrowserViewModel, on
         TextEditor(entry, viewModel, onDismiss, code = kind == ViewerKind.CODE)
         return
     }
+    var pdfFullScreen by remember(entry.ref, kind) {
+        mutableStateOf((kind == ViewerKind.PDF || kind == ViewerKind.DOCUMENT && documentExtension(entry) == "pdf") &&
+            viewModel.state.value.preferences.pdfFullScreen)
+    }
     // decorFitsSystemWindows = false for every kind: a fitted dialog window leaves the browser showing
     // around a full-screen video, and Compose applies these window flags only when the dialog is created.
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(
+    Dialog(onDismissRequest = { if (pdfFullScreen) pdfFullScreen = false else onDismiss() }, properties = DialogProperties(
         usePlatformDefaultWidth = false, decorFitsSystemWindows = false,
     )) {
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -70,7 +74,8 @@ fun ViewerScreen(entry: Entry, kind: ViewerKind, viewModel: BrowserViewModel, on
                 ViewerKind.IMAGE -> ImageGallery(entry, viewModel, onDismiss)
                 ViewerKind.MEDIA -> RichMediaViewer(entry, viewModel, onDismiss)
                 ViewerKind.DATABASE -> SqliteScreen(entry, viewModel, onDismiss)
-                ViewerKind.PDF, ViewerKind.DOCUMENT -> DocumentViewer(entry, viewModel, onDismiss, asPdf = kind == ViewerKind.PDF)
+                ViewerKind.PDF, ViewerKind.DOCUMENT -> DocumentViewer(entry, viewModel, onDismiss, asPdf = kind == ViewerKind.PDF,
+                    fullScreen = pdfFullScreen, onFullScreenChange = { pdfFullScreen = it })
                 ViewerKind.HEX -> HexViewer(entry, viewModel, onDismiss)
                 ViewerKind.TEXT, ViewerKind.CODE, ViewerKind.NONE -> Unit
             }

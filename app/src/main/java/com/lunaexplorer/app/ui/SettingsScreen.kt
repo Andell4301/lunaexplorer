@@ -122,6 +122,7 @@ internal fun SettingsScreen(
                         }
                         SettingsPage.PLAYER -> PlayerSettings(preferences, onChange)
                         SettingsPage.AUDIO -> AudioPlayerSettings(preferences, onChange)
+                        SettingsPage.PDF -> PdfSettings(preferences, onChange)
                         SettingsPage.TERMINAL -> TerminalSettings(preferences, onChange)
                         SettingsPage.DELETING -> DeletingSettings(state, viewModel, onRecycleBin)
                         SettingsPage.PROCEDURES -> ProcedureSettings(state, viewModel.procedures, viewModel.bookmarks, actions) {
@@ -210,6 +211,7 @@ private enum class SettingsPage(val title: String) {
     NETWORK("Network"),
     PLAYER("Video player"),
     AUDIO("Audio player"),
+    PDF("PDF viewer"),
     TERMINAL("Terminal"),
     DELETING("Deleting"),
     PROCEDURES("Stored procedures"),
@@ -238,6 +240,7 @@ private fun summaryOf(page: SettingsPage, state: BrowserState, recordingLog: Boo
     SettingsPage.NETWORK -> NetworkKind.entries.joinToString("  ·  ") { "${it.title}: ${it.summary(state).lowercase()}" }
     SettingsPage.PLAYER -> "Gestures and subtitle appearance"
     SettingsPage.AUDIO -> if (state.preferences.audioBackground) "Background play" else "Off"
+    SettingsPage.PDF -> ""
     SettingsPage.TERMINAL -> ""
     SettingsPage.DELETING -> if (state.recycleBin) "Deleting moves to the recycle bin"
     else "Deleting removes for good"

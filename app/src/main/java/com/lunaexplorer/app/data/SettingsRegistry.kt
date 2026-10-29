@@ -13,7 +13,7 @@ object SettingsRegistry {
 
     val pages: List<String> = listOf(
         "Appearance", "Where Luna opens", "Files and folders", "Media categories",
-        "Video player", "Audio player", "Subtitles", "Terminal",
+        "Video player", "Audio player", "Subtitles", "PDF viewer", "Terminal",
         "Deleting", "Storage access", "Open with Luna", "Document provider", "Network",
         "Bookmarks", "Stored procedures", "Default apps", "Debug log",
     )
@@ -119,6 +119,21 @@ object SettingsRegistry {
         add(flag("audio.background", "Audio player", "Background play",
             { it.audioBackground }, { p, v -> p.copy(audioBackground = v) },
             claims = setOf("audioBackground")))
+        add(flag("pdf.tapToTurn", "PDF viewer", "Tap to turn pages",
+            { it.pdfTapToTurn }, { p, v -> p.copy(pdfTapToTurn = v) },
+            claims = setOf("pdfTapToTurn")))
+        add(flag("pdf.swipeToTurn", "PDF viewer", "Swipe to turn pages",
+            { it.pdfSwipeToTurn }, { p, v -> p.copy(pdfSwipeToTurn = v) },
+            claims = setOf("pdfSwipeToTurn")))
+        add(choice("pdf.direction", "PDF viewer", "Direction", PdfDirection.entries,
+            { it.pdfDirection }, { p, v -> p.copy(pdfDirection = v) },
+            claims = setOf("pdfDirection")))
+        add(choice("pdf.pageLayout", "PDF viewer", "Layout", PdfPageLayout.entries,
+            { it.pdfPageLayout }, { p, v -> p.copy(pdfPageLayout = v) },
+            claims = setOf("pdfPageLayout")))
+        add(flag("pdf.fullScreen", "PDF viewer", "Full screen",
+            { it.pdfFullScreen }, { p, v -> p.copy(pdfFullScreen = v) },
+            claims = setOf("pdfFullScreen")))
         add(flag("terminal.disableSuggestions", "Terminal", "Disable keyboard suggestions",
             { it.terminalDisableSuggestions }, { p, v -> p.copy(terminalDisableSuggestions = v) },
             claims = setOf("terminalDisableSuggestions")))

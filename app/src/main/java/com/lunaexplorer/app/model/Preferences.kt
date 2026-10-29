@@ -31,6 +31,14 @@ enum class VideoExitBehavior(val label: String) {
     OFF("Off"),
 }
 
+enum class PdfDirection(val label: String) {
+    HORIZONTAL("Horizontal"), VERTICAL("Vertical"),
+}
+
+enum class PdfPageLayout(val label: String) {
+    SINGLE("Single page"), CONTINUOUS("Continuous"),
+}
+
 /** Capped below 100 so a hidden item can never vanish entirely. */
 val HIDDEN_FADE_PERCENT = 0..90
 
@@ -108,6 +116,11 @@ data class Preferences(
     val playerBrightnessGesture: Boolean = true,
     val videoExitBehavior: VideoExitBehavior = VideoExitBehavior.PICTURE_IN_PICTURE,
     val audioBackground: Boolean = true,
+    val pdfTapToTurn: Boolean = true,
+    val pdfSwipeToTurn: Boolean = true,
+    val pdfDirection: PdfDirection = PdfDirection.HORIZONTAL,
+    val pdfPageLayout: PdfPageLayout = PdfPageLayout.SINGLE,
+    val pdfFullScreen: Boolean = false,
     val terminalDisableSuggestions: Boolean = true,
     val terminalTapOpensKeyboard: Boolean = true,
     val renameIncludesExtension: Boolean = false,

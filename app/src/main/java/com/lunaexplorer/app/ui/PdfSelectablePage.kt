@@ -29,6 +29,7 @@ internal fun PdfSelectablePage(
     textSelectable: Boolean,
     selection: PdfTextSelection?,
     onSelect: (PdfTextBoundary, PdfTextBoundary, Boolean) -> Unit,
+    displayScale: Float = 1f,
     modifier: Modifier = Modifier,
 ) {
     var drawnSize by remember(image) { mutableStateOf(IntSize.Zero) }
@@ -36,6 +37,7 @@ internal fun PdfSelectablePage(
     val currentCoordinates by rememberUpdatedState(coordinates)
     val currentSelection by rememberUpdatedState(selection)
     val currentSelect by rememberUpdatedState(onSelect)
+    val currentScale by rememberUpdatedState(displayScale.coerceAtLeast(1f))
     val handleRadius = with(LocalDensity.current) { 7.dp.toPx() }
     val handleStem = with(LocalDensity.current) { 9.dp.toPx() }
     val handleTouchRadius = with(LocalDensity.current) { 24.dp.toPx() }
@@ -47,9 +49,9 @@ internal fun PdfSelectablePage(
             val down = awaitFirstDown(requireUnconsumed = true)
             val selected = currentSelection
             fun handlePosition(start: Boolean): Offset? = selected?.handleAnchor(start)?.let {
-                currentCoordinates.toScreen(it) + Offset(0f, handleStem)
+                currentCoordinates.toScreen(it) + Offset(0f, handleStem / currentScale)
             }
-            val handle = nearestPdfHandle(down.position, handlePosition(true), handlePosition(false), handleTouchRadius)
+            val handle = nearestPdfHandle(down.position, handlePosition(true), handlePosition(false), handleTouchRadius / currentScale)
             if (selected != null && handle != null) {
                 val moving = if (handle) selected.start else selected.end
                 val fixed = if (handle) selected.end else selected.start
@@ -96,9 +98,9 @@ internal fun PdfSelectablePage(
                 listOf(true, false).forEach { start ->
                     selected.handleAnchor(start)?.let { point ->
                         val anchor = coordinates.toScreen(point)
-                        val circle = anchor + Offset(0f, handleStem)
-                        drawLine(handleColor, anchor, circle, strokeWidth = 2.dp.toPx())
-                        drawCircle(handleColor, handleRadius, circle)
+                        val circle = anchor + Offset(0f, handleStem / currentScale)
+                        drawLine(handleColor, anchor, circle, strokeWidth = 2.dp.toPx() / currentScale)
+                        drawCircle(handleColor, handleRadius / currentScale, circle)
                     }
                 }
             }

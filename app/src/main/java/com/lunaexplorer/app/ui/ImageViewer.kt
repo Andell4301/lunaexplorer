@@ -131,7 +131,7 @@ internal fun ImageGallery(entry: Entry, viewModel: BrowserViewModel, onDismiss: 
 }
 
 @Composable
-private fun SystemBars(shown: Boolean) {
+internal fun SystemBars(shown: Boolean) {
     val view = LocalView.current
     val window = remember(view) { (view.parent as? DialogWindowProvider)?.window ?: (view.context as? Activity)?.window }
     val bars = remember(window, view) { window?.let { WindowCompat.getInsetsController(it, view) } }
