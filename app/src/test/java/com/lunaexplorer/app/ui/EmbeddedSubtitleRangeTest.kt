@@ -26,6 +26,39 @@ import java.nio.ByteBuffer
 @Config(sdk = [35], application = Application::class)
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class EmbeddedSubtitleRangeTest {
+    @Test fun `subtitle reads skip AVC packet bodies before parsing their NAL headers`() = runBlocking {
+        val configuration = byteArrayOf(1, 100, 0, 31, 0xff.toByte(), 0xe0.toByte(), 0)
+        val payload = ByteArrayOutputStream().apply {
+            repeat(512) {
+                write(ByteBuffer.allocate(4).putInt(16 * 1024).array())
+                write(ByteArray(16 * 1024))
+            }
+        }.toByteArray()
+        val video = element(0xA3, byteArrayOf(0x81.toByte(), 0, 0, 0) + payload)
+        val remote = CountingReader(movie(listOf(cluster(1000,
+            video + subtitle("After AVC", 0))), videoCodec = "V_MPEG4/ISO/AVC",
+            videoExtras = element(0x63A2, configuration)), 192 * 1024)
+
+        assertEquals(listOf(1_000_000L to "After AVC"), read(remote, 2_000_000))
+        assertTrue("Read ${remote.served} bytes", remote.served < 192 * 1024)
+        assertTrue(remote.closed)
+    }
+
+    @Test fun `skipped video groups do not hide following subtitles behind supplemental data`() = runBlocking {
+        val configuration = byteArrayOf(1, 100, 0, 31, 0xff.toByte(), 0xe0.toByte(), 0)
+        val packet = ByteBuffer.allocate(4).putInt(1024 * 1024).array() + ByteArray(1024 * 1024)
+        val video = element(0xA0,
+            element(0xA1, byteArrayOf(0x81.toByte(), 0, 0, 0) + packet) +
+                element(0x9B, integer(5000)) +
+                element(0x75A1, element(0xA6, element(0xEE, integer(1)) + element(0xA5, ByteArray(1024 * 1024)))))
+        val remote = CountingReader(movie(listOf(cluster(1000,
+            subtitle("Before video", 0) + video + subtitle("After video", 500))),
+            videoCodec = "V_MPEG4/ISO/AVC", videoExtras = element(0x63A2, configuration)), 256 * 1024)
+
+        assertEquals(listOf(1_000_000L to "Before video", 1_500_000L to "After video"), read(remote, 2_000_000))
+        assertTrue(remote.closed)
+    }
+
     @Test fun `bounded remote scan skips late clusters without losing reordered or negative-offset subtitles`() = runBlocking {
         val bytes = movie(listOf(
             cluster(1000, subtitle("At start", 0)),
@@ -131,9 +164,10 @@ class EmbeddedSubtitleRangeTest {
         return captions
     }
 
-    private fun movie(clusters: List<ByteArray>, timestampScale: Long = 1_000_000, subtitleExtras: ByteArray = byteArrayOf()): ByteArray {
+    private fun movie(clusters: List<ByteArray>, timestampScale: Long = 1_000_000, subtitleExtras: ByteArray = byteArrayOf(),
+                      videoCodec: String = "V_MPEG4/ISO/ASP", videoExtras: ByteArray = byteArrayOf()): ByteArray {
         val video = element(0xAE, element(0xD7, integer(1)) + element(0x83, integer(1)) +
-            element(0x86, "V_MPEG4/ISO/ASP".toByteArray()) +
+            element(0x86, videoCodec.toByteArray()) + videoExtras +
             element(0xE0, element(0xB0, integer(16)) + element(0xBA, integer(16))))
         val subtitle = element(0xAE, element(0xD7, integer(2)) + element(0x83, integer(17)) +
             element(0x86, "S_TEXT/UTF8".toByteArray()) + element(0x22B59C, "eng".toByteArray()) + subtitleExtras)

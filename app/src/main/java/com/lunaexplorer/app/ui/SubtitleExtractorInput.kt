@@ -15,7 +15,8 @@ internal class SubtitleExtractorInput(
     private val size = channel.size()
     private var position = channel.position()
     private var peekPosition = position
-    private val buffer = ByteArray(16 * 1024)
+    private val buffer = ByteArray(1024 * 1024)
+    private var readAhead = 16 * 1024
     private var bufferedAt = -1L
     private var buffered = 0
 
@@ -31,9 +32,12 @@ internal class SubtitleExtractorInput(
         if (length == 0) return 0
         if (position == size) return C.RESULT_END_OF_INPUT
         if (position < bufferedAt || position - bufferedAt >= buffered) {
+            val gap = position - bufferedAt - buffered
+            // Dense packet headers share read-ahead; distant seeks keep their reads small.
+            readAhead = if (bufferedAt >= 0 && gap in 0..64 * 1024L) minOf(readAhead * 2, this.buffer.size) else 16 * 1024
             channel.position(position)
             bufferedAt = position
-            buffered = channel.read(ByteBuffer.wrap(this.buffer, 0, minOf(this.buffer.size.toLong(), size - position).toInt()))
+            buffered = channel.read(ByteBuffer.wrap(this.buffer, 0, minOf(readAhead.toLong(), size - position).toInt()))
             if (buffered == 0) throw IOException("The file stopped returning bytes")
             if (buffered == C.RESULT_END_OF_INPUT) throw EOFException()
         }

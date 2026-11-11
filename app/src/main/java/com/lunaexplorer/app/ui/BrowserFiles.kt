@@ -80,23 +80,6 @@ class BrowserFiles internal constructor(
         graph.providers.provider(ref).stat(ref).takeIf { it.directory && Capability.CREATE in it.capabilities }
     }
 
-    suspend fun clipDestination(entry: Entry): Entry? {
-        val parent = try {
-            withContext(Dispatchers.IO) { graph.providers.provider(entry.ref).parentOf(entry.ref) }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (error: Exception) {
-            currentCoroutineContext().ensureActive()
-            null
-        }
-        for (ref in listOfNotNull(parent, _state.value.location?.ref).distinct()) {
-            try { folderForSaving(ref)?.let { return it } }
-            catch (cancelled: CancellationException) { throw cancelled }
-            catch (error: Exception) { currentCoroutineContext().ensureActive() }
-        }
-        return null
-    }
-
     suspend fun createClipFile(): File {
         var created: File? = null
         try {

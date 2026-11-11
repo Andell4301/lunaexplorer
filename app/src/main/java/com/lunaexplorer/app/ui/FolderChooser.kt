@@ -50,8 +50,11 @@ internal fun FolderChooser(viewModel: BrowserViewModel, showHidden: Boolean, onD
 }
 
 @Composable
-internal fun FolderDestinationChooser(viewModel: BrowserViewModel, showHidden: Boolean, onDismiss: () -> Unit, onChoose: (Entry) -> Unit) {
-    FolderChooserContent(viewModel, showHidden, onDismiss, pathsOnly = false) { entry, _ -> entry?.let(onChoose) }
+internal fun FolderDestinationChooser(viewModel: BrowserViewModel, showHidden: Boolean, onDismiss: () -> Unit,
+    onChoose: (Entry, String) -> Unit) {
+    FolderChooserContent(viewModel, showHidden, onDismiss, pathsOnly = false) { entry, path ->
+        if (entry != null && path != null) onChoose(entry, path)
+    }
 }
 
 @Composable
@@ -77,6 +80,7 @@ private fun FolderChooserContent(
                 .map { it.ref to it.title }
             else {
                 path = viewModel.files.shownPathOf(here)
+                    ?: if (pathsOnly) null else trail.joinToString(" / ") { it.second }
                 if (!pathsOnly) destination = viewModel.files.folderForSaving(here)
                 rows = viewModel.files.foldersIn(here, showHidden).map { it.ref to it.name }
             }

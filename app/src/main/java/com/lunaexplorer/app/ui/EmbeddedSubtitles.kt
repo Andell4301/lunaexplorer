@@ -107,7 +107,7 @@ internal suspend fun readEmbeddedSubtitleCues(
         try {
             runBlocking(context.minusKey(ContinuationInterceptor)) { source.openChannel?.invoke()?.also { channel = it } }
             extractors = lunaExtractorsFactory(parsers, MatroskaExtractor.FLAG_DISABLE_SEEK_FOR_CUES,
-                endTimeUs.takeIf { channel != null }).createExtractors(source.uri, emptyMap())
+                endTimeUs.takeIf { channel != null }, subtitleOnly = true).createExtractors(source.uri, emptyMap())
             data = if (channel == null) source.dataSources.createDataSource() else null
             val channelInput = channel?.let { SubtitleExtractorInput(it, active) }
             val reader = DataReader { bytes, offset, length -> active(); checkNotNull(data).read(bytes, offset, length) }

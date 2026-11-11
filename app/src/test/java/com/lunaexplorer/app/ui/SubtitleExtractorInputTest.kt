@@ -2,12 +2,14 @@ package com.lunaexplorer.app.ui
 
 import androidx.media3.common.C
 import java.io.EOFException
+import java.nio.ByteBuffer
 import java.nio.channels.SeekableByteChannel
 import java.nio.file.Files
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -15,6 +17,45 @@ import org.junit.rules.TemporaryFolder
 @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
 class SubtitleExtractorInputTest {
     @get:Rule val temporary = TemporaryFolder()
+
+    @Test fun `nearby packet headers are prefetched without a read for every small block`() {
+        val bytes = ByteArray(2 * 1024 * 1024) { (it / 4096).toByte() }
+        val file = temporary.newFile().apply { writeBytes(bytes) }
+        Files.newByteChannel(file.toPath()).use { delegate ->
+            var reads = 0
+            val channel = object : SeekableByteChannel by delegate {
+                override fun read(dst: ByteBuffer): Int { reads++; return delegate.read(dst) }
+            }
+            val input = SubtitleExtractorInput(channel) {}
+            val header = ByteArray(1)
+            repeat(bytes.size / 4096) { index ->
+                input.readFully(header, 0, 1)
+                assertEquals(index.toByte(), header[0])
+                input.skipFully(4095)
+            }
+            assertTrue("Used $reads reads for nearby packet headers", reads < 24)
+        }
+    }
+
+    @Test fun `a distant seek returns to small reads after scanning nearby packets`() {
+        val file = temporary.newFile().apply { writeBytes(ByteArray(8 * 1024 * 1024)) }
+        Files.newByteChannel(file.toPath()).use { delegate ->
+            var bytesRead = 0
+            val channel = object : SeekableByteChannel by delegate {
+                override fun read(dst: ByteBuffer): Int = delegate.read(dst).also { if (it > 0) bytesRead += it }
+            }
+            val input = SubtitleExtractorInput(channel) {}
+            val header = ByteArray(1)
+            repeat(256) {
+                input.readFully(header, 0, 1)
+                input.skipFully(4095)
+            }
+            val previousBytes = bytesRead
+            input.seek(6 * 1024 * 1024L)
+            input.readFully(header, 0, 1)
+            assertTrue("A sparse seek fetched ${bytesRead - previousBytes} bytes", bytesRead - previousBytes <= 32 * 1024)
+        }
+    }
 
     @Test fun `peeking leaves reads unchanged and skipping resets the peek position`() {
         val file = temporary.newFile().apply { writeText("0123456789") }

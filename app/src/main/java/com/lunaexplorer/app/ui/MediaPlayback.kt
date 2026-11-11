@@ -59,8 +59,9 @@ internal class MediaPlayback(
     private val appContext = context.applicationContext
     private val subtitleOffset = SubtitleOffset()
     private val handler = Handler(Looper.getMainLooper())
+    private val clipReads = ClipPlaybackCache(source.uri, source.dataSources)
     private val player = ExoPlayer.Builder(context.applicationContext)
-        .setMediaSourceFactory(DefaultMediaSourceFactory(source.dataSources,
+        .setMediaSourceFactory(DefaultMediaSourceFactory(clipReads,
             lunaExtractorsFactory(OffsetSubtitleParserFactory(subtitleOffset)))
             .setSubtitleParserFactory(OffsetSubtitleParserFactory(subtitleOffset)))
         .setAudioAttributes(AudioAttributes.DEFAULT, true)
@@ -71,6 +72,12 @@ internal class MediaPlayback(
         .setReleaseTimeoutMs(500)
         .setDetachSurfaceTimeoutMs(500)
         .build()
+    private val clipRange = ClipPlaybackRange({ start -> seek(start); play() }, ::pause) { end, stop ->
+        val message = player.createMessage { _, _ -> stop() }
+            .setLooper(Looper.getMainLooper()).setPosition(end).send()
+        val cancel: () -> Unit = { message.cancel() }
+        cancel
+    }
     private val trackNames = DefaultTrackNameProvider(context.resources)
     private val trackOverrides = mutableMapOf<Int, TrackSelectionOverride>()
     private val trackIdentities = mutableMapOf<Int, MediaTrackIdentity>()
@@ -292,6 +299,7 @@ internal class MediaPlayback(
 
     fun play() {
         if (closed || failure != null) return
+        clearRange()
         frameGeneration++
         steppedFrameUs = null
         expectedFrameSeekMs = null
@@ -303,8 +311,22 @@ internal class MediaPlayback(
     }
 
     fun pause() {
+        clearRange()
         if (!closed) { player.pause(); playing = false }
     }
+
+    fun setClipEditing(enabled: Boolean) {
+        clipReads.setEnabled(enabled && !closed)
+        if (!enabled) clearRange()
+    }
+
+    fun playRange(start: Long, end: Long) {
+        if (closed || !seekable || failure != null) return
+        require(start >= 0 && end > start && end <= duration)
+        clipRange.play(start, end)
+    }
+
+    private fun clearRange() = clipRange.cancel()
 
     fun startAt(resume: PlaybackResume) {
         if (closed) return
@@ -366,6 +388,7 @@ internal class MediaPlayback(
 
     fun seek(target: Long) {
         if (!closed && seekable) {
+            clearRange()
             resetFramePosition()
             player.setSeekParameters(SeekParameters.EXACT)
             player.seekTo(target.coerceIn(0L, duration))
@@ -381,7 +404,8 @@ internal class MediaPlayback(
             ?: (player.currentPosition.coerceAtLeast(0) * 1000)
         val identity = player.videoFormat?.let(::mediaTrackIdentity)
             ?: error("The video track is not ready")
-        val index = frameIndex.takeIf { indexedVideo == identity } ?: readVideoFrameIndex(source, identity)
+        val index = frameIndex?.takeIf { indexedVideo == identity && it.covers(currentUs, forward) }
+            ?: readVideoFrameIndex(source, identity, currentUs)
         currentCoroutineContext().ensureActive()
         if (closed || generation != frameGeneration) return null
         frameIndex = index
@@ -550,6 +574,8 @@ internal class MediaPlayback(
     fun close() {
         if (closed) return
         closed = true
+        clearRange()
+        clipReads.setEnabled(false)
         resetFramePosition()
         frameIndex = null
         handler.removeCallbacksAndMessages(null)

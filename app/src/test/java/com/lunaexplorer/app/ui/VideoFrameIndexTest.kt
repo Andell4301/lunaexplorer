@@ -13,6 +13,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -102,6 +103,67 @@ class VideoFrameIndexTest {
         assertTrue(!channel.isOpen)
     }
 
+    @Test fun `matroska indexing reads nearby clusters without scanning the rest of the video`() = runBlocking {
+        val bytes = indexedMatroska()
+        val delegate = Files.newByteChannel(temporary.newFile("indexed.mkv").apply { writeBytes(bytes) }.toPath())
+        var read = 0
+        val channel = object : SeekableByteChannel by delegate {
+            override fun read(dst: ByteBuffer): Int = delegate.read(dst).also { if (it > 0) read += it }
+        }
+        val source = PlaybackSource(Uri.parse("luna-media://playback/indexed.mkv"),
+            DataSource.Factory { error("The provider channel is available") }) { channel }
+
+        val frames = readVideoFrameIndex(source, null)
+
+        assertEquals(1_000_000L, frames.adjacent(0, true))
+        assertTrue("Read $read of ${bytes.size} bytes", read < 64 * 1024)
+        assertTrue(!channel.isOpen)
+    }
+
+    @Test fun `a later matroska frame lookup seeks past earlier video packets`() = runBlocking {
+        val bytes = indexedMatroska(largeAt = 0)
+        val delegate = Files.newByteChannel(temporary.newFile("later.mkv").apply { writeBytes(bytes) }.toPath())
+        var read = 0
+        val channel = object : SeekableByteChannel by delegate {
+            override fun read(dst: ByteBuffer): Int = delegate.read(dst).also { if (it > 0) read += it }
+        }
+        val source = PlaybackSource(Uri.parse("luna-media://playback/later.mkv"),
+            DataSource.Factory { error("The provider channel is available") }) { channel }
+
+        val frames = readVideoFrameIndex(source, null, 90_000_000)
+
+        assertEquals(10_000_000L, frames.adjacent(90_000_000, false))
+        assertTrue(frames.covers(90_000_000, false))
+        assertFalse(frames.covers(0, true))
+        assertTrue("Read $read of ${bytes.size} bytes", read < 64 * 1024)
+        assertTrue(!channel.isOpen)
+    }
+
+    @Test fun `physically reordered matroska clusters retain exact neighboring frames`() = runBlocking {
+        val bytes = indexedMatroska(physicalOrder = listOf(0, 3, 2, 1))
+        val channel = Files.newByteChannel(temporary.newFile("reordered.mkv").apply { writeBytes(bytes) }.toPath())
+        val source = PlaybackSource(Uri.parse("luna-media://playback/reordered.mkv"),
+            DataSource.Factory { error("The provider channel is available") }) { channel }
+
+        val frames = readVideoFrameIndex(source, null, 90_000_000)
+
+        assertEquals(90_001_000L, frames.adjacent(90_000_000, true))
+        assertEquals(10_000_000L, frames.adjacent(90_000_000, false))
+        assertTrue(!channel.isOpen)
+    }
+
+    @Test fun `frame windows request another lookup only when the next step is outside their coverage`() {
+        val frames = VideoFrameIndex(longArrayOf(10, 20, 30), 10, 40)
+        assertTrue(frames.covers(20, true))
+        assertTrue(frames.covers(20, false))
+        assertFalse(frames.covers(10, false))
+        assertFalse(frames.covers(30, true))
+        assertFalse(frames.covers(5, true))
+        val complete = VideoFrameIndex(longArrayOf(0, 20))
+        assertTrue(complete.covers(0, false))
+        assertTrue(complete.covers(20, true))
+    }
+
     @Test fun `a missing selected video track fails without substituting another track`() = runBlocking {
         val delegate = ByteArrayDataSource(fixture("mp4"))
         var closed = false
@@ -153,6 +215,40 @@ class VideoFrameIndexTest {
         withTimeout(5000) { reading.await(); load.cancelAndJoin() }
         assertTrue(load.isCancelled)
         assertTrue(closed)
+    }
+
+    private fun indexedMatroska(
+        largeAt: Long = 90_000,
+        physicalOrder: List<Int> = listOf(0, 1, 2, 3),
+    ): ByteArray {
+        fun id(value: Int) = (3 downTo 0).map { (value ushr (it * 8)).toByte() }
+            .dropWhile { it == 0.toByte() }.toByteArray()
+        fun element(id: Int, payload: ByteArray) =
+            id(id) + ByteBuffer.allocate(4).putInt(payload.size or 0x10000000).array() + payload
+        fun integer(value: Long) = ByteBuffer.allocate(8).putLong(value).array()
+        val info = element(0x1549A966, element(0x2AD7B1, integer(1_000_000)) +
+            element(0x4489, ByteBuffer.allocate(8).putDouble(100_000.0).array()))
+        val tracks = element(0x1654AE6B, element(0xAE, element(0xD7, integer(1)) +
+            element(0x83, integer(1)) + element(0x86, "V_MPEG4/ISO/ASP".toByteArray()) +
+            element(0xE0, element(0xB0, integer(16)) + element(0xBA, integer(16)))))
+        val times = listOf(0L, 1000L, 10_000L, 90_000L)
+        val clusters = times.map { time ->
+            val blocks = if (time == largeAt) (0 until 512).map { offset ->
+                element(0xA3, byteArrayOf(0x81.toByte(), (offset shr 8).toByte(), offset.toByte(), 0x80.toByte()) + ByteArray(1024))
+            }.fold(byteArrayOf()) { bytes, block -> bytes + block }
+            else element(0xA3, byteArrayOf(0x81.toByte(), 0, 0, 0x80.toByte()) + ByteArray(16))
+            element(0x1F43B675, element(0xE7, integer(time)) + blocks)
+        }
+        fun cues(positions: List<Long>) = element(0x1C53BB6B, times.indices.map { index ->
+            element(0xBB, element(0xB3, integer(times[index])) +
+                element(0xB7, element(0xF7, integer(1)) + element(0xF1, integer(positions[index]))))
+        }.fold(byteArrayOf()) { bytes, cue -> bytes + cue })
+        var position = (info.size + tracks.size + cues(List(times.size) { 0L }).size).toLong()
+        val positions = MutableList(times.size) { 0L }
+        for (index in physicalOrder) { positions[index] = position; position += clusters[index].size }
+        val segment = info + tracks + cues(positions) + physicalOrder.fold(byteArrayOf()) { bytes, index -> bytes + clusters[index] }
+        return element(0x1A45DFA3, element(0x4282, "matroska".toByteArray()) + element(0x4285, integer(2))) +
+            element(0x18538067, segment)
     }
 
     private fun fixture(extension: String) = checkNotNull(javaClass.getResourceAsStream("/subtitles/embedded.$extension"))

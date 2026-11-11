@@ -23,12 +23,13 @@ internal fun lunaExtractorsFactory(
     parsers: SubtitleParser.Factory,
     matroskaFlags: Int = 0,
     subtitleEndTimeUs: Long? = null,
+    subtitleOnly: Boolean = false,
 ): ExtractorsFactory {
     val delegate = DefaultExtractorsFactory().setSubtitleParserFactory(parsers).setMatroskaExtractorFlags(matroskaFlags)
     var currentParsers = parsers
     fun replace(extractors: Array<Extractor>): Array<Extractor> = extractors.map {
         if (it is MatroskaExtractor) {
-            val matroska = LunaMatroskaExtractor(currentParsers, matroskaFlags, subtitleEndTimeUs)
+            val matroska = LunaMatroskaExtractor(currentParsers, matroskaFlags, subtitleEndTimeUs, subtitleOnly)
             if (subtitleEndTimeUs == null) matroska else object : Extractor by matroska {
                 override fun read(input: ExtractorInput, seekPosition: PositionHolder): Int = try {
                     matroska.read(input, seekPosition)
@@ -60,8 +61,12 @@ private class LunaMatroskaExtractor(
     private val parsers: SubtitleParser.Factory,
     flags: Int,
     private val subtitleEndTimeUs: Long?,
+    private val subtitleOnly: Boolean,
 ) : MatroskaExtractor(parsers, flags) {
     private val compressedTracks = mutableSetOf<Long>()
+    private val ignoredTracks = mutableSetOf<Long>()
+    private val blockHeader = ByteArray(11)
+    private var ignoredBlockGroup = false
     private var compression: Long? = null
     private var timestampScaleNs = 1_000_000L
     private var trackTimestampScale = 1.0
@@ -69,6 +74,12 @@ private class LunaMatroskaExtractor(
     private var canBoundClusters = true
     private var subtitleCodecDelayNs = 0L
     private var clusterEnd: Long? = null
+
+    override fun seek(position: Long, timeUs: Long) {
+        super.seek(position, timeUs)
+        ignoredBlockGroup = false
+        clusterEnd = null
+    }
 
     override fun getElementType(id: Int): Int {
         val type = super.getElementType(id)
@@ -82,6 +93,7 @@ private class LunaMatroskaExtractor(
 
     override fun startMasterElement(id: Int, contentPosition: Long, contentSize: Long) {
         if (id == TRACK_ENTRY) { compression = null; trackTimestampScale = 1.0 }
+        if (id == BLOCK_GROUP) ignoredBlockGroup = false
         if (id == CONTENT_COMPRESSION) compression = 0L
         if (id == CLUSTER) {
             clusterEnd = if (contentSize < 0 || contentSize in UNKNOWN_ELEMENT_SIZES ||
@@ -113,6 +125,10 @@ private class LunaMatroskaExtractor(
             compressedTracks.add(track.number.toLong())
         }
         super.endMasterElement(id)
+        if (subtitleOnly && track != null && (track.type != C.TRACK_TYPE_TEXT ||
+            track.format?.let(parsers::supportsFormat) != true)) {
+            ignoredTracks.add(track.number.toLong())
+        }
         if (subtitleEndTimeUs != null && track?.type == C.TRACK_TYPE_TEXT &&
             track.format?.let(parsers::supportsFormat) == true) {
             selectedTextTrack = true
@@ -121,6 +137,7 @@ private class LunaMatroskaExtractor(
             subtitleCodecDelayNs = maxOf(subtitleCodecDelayNs, track.codecDelayNs)
         }
         if (id == CLUSTER) clusterEnd = null
+        if (id == BLOCK_GROUP) ignoredBlockGroup = false
     }
 
     private fun clusterIsLate(timestamp: Long): Boolean {
@@ -136,35 +153,44 @@ private class LunaMatroskaExtractor(
     }
 
     override fun binaryElement(id: Int, contentSize: Int, input: ExtractorInput) {
-        if ((id != BLOCK && id != SIMPLE_BLOCK) || compressedTracks.isEmpty() || contentSize < 4) {
+        if (id == BLOCK_ADDITIONAL && ignoredBlockGroup) {
+            input.skipFully(contentSize)
+            return
+        }
+        if ((id != BLOCK && id != SIMPLE_BLOCK) || (!subtitleOnly && compressedTracks.isEmpty()) || contentSize < 4) {
             super.binaryElement(id, contentSize, input)
             return
         }
-        val first = ByteArray(1)
-        input.peekFully(first, 0, 1)
-        val mask = (first[0].toInt() and 255).takeHighestOneBit()
+        input.peekFully(blockHeader, 0, 1)
+        val mask = (blockHeader[0].toInt() and 255).takeHighestOneBit()
         val trackBytes = if (mask == 0) 0 else 8 - mask.countTrailingZeroBits()
         input.resetPeekPosition()
         if (trackBytes == 0 || trackBytes + 3 > contentSize) {
             super.binaryElement(id, contentSize, input)
             return
         }
-        val header = ByteArray(trackBytes + 3)
-        input.peekFully(header, 0, header.size)
+        val headerSize = trackBytes + 3
+        input.peekFully(blockHeader, 0, headerSize)
         input.resetPeekPosition()
-        var track = (header[0].toInt() and (mask - 1)).toLong()
-        for (index in 1 until trackBytes) track = (track shl 8) or (header[index].toInt() and 255).toLong()
+        var track = (blockHeader[0].toInt() and (mask - 1)).toLong()
+        for (index in 1 until trackBytes) track = (track shl 8) or (blockHeader[index].toInt() and 255).toLong()
+        if (track in ignoredTracks) {
+            // TrackOutput sees AVC/HEVC data only after Media3 has read its NAL headers.
+            if (id == BLOCK) ignoredBlockGroup = true
+            input.skipFully(contentSize)
+            return
+        }
         if (track !in compressedTracks) {
             super.binaryElement(id, contentSize, input)
             return
         }
-        if (header.last().toInt() and 6 != 0) throw malformed("Compressed subtitle lacing is not supported")
+        if (blockHeader[headerSize - 1].toInt() and 6 != 0) throw malformed("Compressed subtitle lacing is not supported")
         if (contentSize > MAX_COMPRESSED_SUBTITLE_BYTES) throw malformed("Compressed subtitle is too large")
         val position = input.position
-        val payload = ByteArray(contentSize - header.size)
-        input.skipFully(header.size)
+        val payload = ByteArray(contentSize - headerSize)
+        input.skipFully(headerSize)
         input.readFully(payload, 0, payload.size)
-        val inflated = inflate(payload, header)
+        val inflated = inflate(payload, blockHeader.copyOf(headerSize))
         val bytes = ByteArrayInputStream(inflated)
         val expanded = DefaultExtractorInput(DataReader { target, offset, length -> bytes.read(target, offset, length) },
             position, position + inflated.size)
@@ -207,7 +233,9 @@ private const val CLUSTER = 0x1F43B675
 private const val CLUSTER_TIMESTAMP = 0xE7
 private const val CONTENT_COMPRESSION = 0x5034
 private const val COMPRESSION_ALGORITHM = 0x4254
+private const val BLOCK_GROUP = 0xA0
 private const val BLOCK = 0xA1
+private const val BLOCK_ADDITIONAL = 0xA5
 private const val SIMPLE_BLOCK = 0xA3
 private const val MAX_COMPRESSED_SUBTITLE_BYTES = 2 * 1024 * 1024
 private val UNKNOWN_ELEMENT_SIZES = (1..8).map { (1L shl (it * 7)) - 1 }.toSet()

@@ -36,26 +36,6 @@ class BrowserFilesClipTest {
         assertEquals("clip bytes", harness.graph.providers.provider(source).openRead(source).use { it.readBytes().decodeToString() })
     }
 
-    @Test fun `the source parent is preferred over the folder on screen`() = runBlocking {
-        val storage = MemoryStorageProvider("videos")
-        val ref = storage.file(storage.root, "source.mp4", "video")
-        harness.graph.providers.register(storage)
-
-        assertEquals(storage.root, harness.viewModel.files.clipDestination(storage.stat(ref))?.ref)
-    }
-
-    @Test fun `a read-only source falls back to the browser folder`() = runBlocking {
-        val storage = MemoryStorageProvider("videos")
-        val ref = storage.file(storage.root, "source.mp4", "video")
-        harness.graph.providers.register(object : StorageProvider by storage {
-            override suspend fun stat(ref: NodeRef): Entry = storage.stat(ref).let {
-                it.copy(capabilities = it.capabilities - Capability.CREATE)
-            }
-        })
-
-        assertEquals(harness.graph.local.root("harness"), harness.viewModel.files.clipDestination(storage.stat(ref))?.ref)
-    }
-
     @Test fun `an invalid filename leaves the render owned by its caller`() = runBlocking {
         val file = harness.viewModel.files.createClipFile().apply { writeText("clip bytes") }
         try {
